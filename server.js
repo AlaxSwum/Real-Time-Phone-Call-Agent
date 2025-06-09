@@ -77,10 +77,95 @@ app.get('/', (req, res) => {
         environment: NODE_ENV,
         endpoints: {
             health: '/health',
+            voice_webhook: '/webhook/voice',
             websocket: 'ws://your-render-url',
             documentation: 'https://github.com/AlaxSwum/Real-Time-Phone-Call-Agent'
         }
     });
+});
+
+// Twilio Voice Webhook Endpoint
+app.post('/webhook/voice', (req, res) => {
+    console.log('📞 Incoming call received from Twilio');
+    console.log('📋 Call details:', req.body);
+    
+    // Extract call information
+    const { From, To, CallSid, Direction } = req.body;
+    
+    // Log call details
+    console.log(`📞 Call from ${From} to ${To} (${Direction})`);
+    console.log(`🆔 Call SID: ${CallSid}`);
+    
+    // Send to n8n webhook if configured
+    if (process.env.N8N_WEBHOOK_URL) {
+        fetch(process.env.N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'twilio_voice_webhook',
+                data: req.body,
+                timestamp: new Date().toISOString()
+            })
+        }).catch(error => {
+            console.error('❌ Error sending to n8n webhook:', error);
+        });
+    }
+    
+    // TwiML response for handling the call
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Hello! Welcome to the Real-Time Call Processor. Your call is being processed by our AI system.</Say>
+    <Record 
+        action="https://real-time-phone-call-agent.onrender.com/webhook/recording"
+        method="POST"
+        maxLength="60"
+        playBeep="true"
+        recordingStatusCallback="https://real-time-phone-call-agent.onrender.com/webhook/recording-status"
+    />
+</Response>`;
+    
+    res.type('text/xml');
+    res.send(twiml);
+});
+
+// Twilio Recording Webhook
+app.post('/webhook/recording', (req, res) => {
+    console.log('🎙️ Recording completed:', req.body);
+    
+    const { RecordingUrl, CallSid, RecordingDuration } = req.body;
+    
+    // Process recording with AI (placeholder)
+    console.log(`🎵 Recording URL: ${RecordingUrl}`);
+    console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
+    
+    // Send recording data to n8n if configured
+    if (process.env.N8N_WEBHOOK_URL) {
+        fetch(process.env.N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'twilio_recording',
+                data: req.body,
+                timestamp: new Date().toISOString()
+            })
+        }).catch(error => {
+            console.error('❌ Error sending recording to n8n:', error);
+        });
+    }
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Thank you for your message. It has been processed successfully. Goodbye!</Say>
+</Response>`;
+    
+    res.type('text/xml');
+    res.send(twiml);
+});
+
+// Twilio Recording Status Webhook
+app.post('/webhook/recording-status', (req, res) => {
+    console.log('📊 Recording status update:', req.body);
+    res.status(200).send('OK');
 });
 
 // AI Processing Functions (to be implemented)
@@ -200,7 +285,7 @@ app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint not found',
         path: req.originalUrl,
-        available_endpoints: ['/', '/health'],
+        available_endpoints: ['/', '/health', '/webhook/voice', '/webhook/recording', '/webhook/recording-status'],
         websocket_path: '/ws'
     });
 });
