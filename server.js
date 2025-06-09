@@ -511,7 +511,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.2&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help"]&enable_extra_session_information=true', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.1&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help"]&enable_extra_session_information=true', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -541,36 +541,40 @@ function handleTwilioStreamConnection(ws, req) {
                             transcriptTimeout = null;
                             console.log('✅ Real-time transcription working successfully!');
                         }
-                    } else if (transcript.text !== undefined) {
-                        // Add to full transcript (accept even lower confidence for phone audio quality)
-                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 0) {
-                            fullTranscript += transcript.text + ' ';
-                        }
                         
-                        // Broadcast to dashboard clients (including empty for debugging)
-                        const confidencePercent = Math.round((transcript.confidence || 0) * 100);
-                        
-                        if (transcript.text && transcript.text.trim().length > 0) {
-                            console.log(`📝 TRANSCRIPT: "${transcript.text}" (${confidencePercent}% confidence, ${transcript.message_type})`);
-                        }
-                        
-                        broadcastToClients({
-                            type: 'live_transcript',
-                            message: transcript.text ? `"${transcript.text}" (${confidencePercent}% confidence)` : `Processing audio (${confidencePercent}% confidence)`,
-                            data: {
-                                callSid: callSid,
-                                text: transcript.text || "",
-                                confidence: transcript.confidence,
-                                is_final: transcript.message_type === 'FinalTranscript',
-                                timestamp: new Date().toISOString()
+                        // Process the transcript (this was missing!)
+                        if (transcript.text !== undefined) {
+                            // Add to full transcript (accept even lower confidence for phone audio quality)
+                            if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 0) {
+                                fullTranscript += transcript.text + ' ';
+                                console.log(`✅ Added to full transcript: "${transcript.text}"`);
                             }
-                        });
-                        
-                        // If final transcript, analyze with OpenAI and detect intents
-                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 1) {
-                            console.log('🧠 Analyzing transcript for intents...');
-                            analyzeTranscriptWithAI(transcript.text, callSid);
-                            detectAndProcessIntent(transcript.text, callSid);
+                            
+                            // Broadcast to dashboard clients (including empty for debugging)
+                            const confidencePercent = Math.round((transcript.confidence || 0) * 100);
+                            
+                            if (transcript.text && transcript.text.trim().length > 0) {
+                                console.log(`📝 TRANSCRIPT: "${transcript.text}" (${confidencePercent}% confidence, ${transcript.message_type})`);
+                            }
+                            
+                            broadcastToClients({
+                                type: 'live_transcript',
+                                message: transcript.text ? `"${transcript.text}" (${confidencePercent}% confidence)` : `Processing audio (${confidencePercent}% confidence)`,
+                                data: {
+                                    callSid: callSid,
+                                    text: transcript.text || "",
+                                    confidence: transcript.confidence,
+                                    is_final: transcript.message_type === 'FinalTranscript',
+                                    timestamp: new Date().toISOString()
+                                }
+                            });
+                            
+                            // If final transcript, analyze with OpenAI and detect intents
+                            if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 1) {
+                                console.log('🧠 Analyzing transcript for intents...');
+                                analyzeTranscriptWithAI(transcript.text, callSid);
+                                detectAndProcessIntent(transcript.text, callSid);
+                            }
                         }
                     } else if (transcript.text === "" && transcript.confidence === 0) {
                         console.log('🔇 Empty transcript received - audio may be too quiet or unclear');
@@ -702,55 +706,15 @@ function handleTwilioStreamConnection(ws, req) {
                     if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
                         try {
                             // Twilio sends mulaw-encoded audio as base64
-                            // AssemblyAI real-time API needs PCM, so we need to convert mulaw to PCM
-                            let pcmBuffer = null;
-                            let conversionSuccess = false;
-                            
-                            try {
-                                const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-                                
-                                // Validate mulaw buffer
-                                if (mulawBuffer.length === 0) {
-                                    throw new Error('Empty mulaw buffer');
-                                }
-                                
-                                pcmBuffer = convertMulawToPcm(mulawBuffer);
-                                
-                                // Validate PCM conversion
-                                if (!pcmBuffer || pcmBuffer.length === 0) {
-                                    throw new Error('PCM conversion failed - empty buffer');
-                                }
-                                
-                                const pcmBase64 = pcmBuffer.toString('base64');
-                                
-                                const audioMessage = {
-                                    audio_data: pcmBase64
-                                };
-                                assemblyAISocket.send(JSON.stringify(audioMessage));
-                                conversionSuccess = true;
-                                
-                                if (mediaPacketCount === 1) {
-                                    console.log(`🔍 First conversion check: mulaw[0]=${mulawBuffer[0]}, pcm[0:1]=${pcmBuffer.readInt16LE(0)}`);
-                                }
-                                
-                            } catch (conversionError) {
-                                console.error('❌ Error converting mulaw to PCM:', conversionError.message);
-                                // Fallback: send original data
-                                const audioMessage = {
-                                    audio_data: data.media.payload
-                                };
-                                assemblyAISocket.send(JSON.stringify(audioMessage));
-                                conversionSuccess = false;
-                            }
+                            // AssemblyAI real-time works with original mulaw format  
+                            const audioMessage = {
+                                audio_data: data.media.payload
+                            };
+                            assemblyAISocket.send(JSON.stringify(audioMessage));
                             
                             if (mediaPacketCount === 1) {
                                 const mulawLength = Buffer.from(data.media.payload, 'base64').length;
-                                console.log(`✅ FIRST audio packet sent to AssemblyAI (mulaw→PCM conversion: ${conversionSuccess ? 'SUCCESS' : 'FAILED'})`);
-                                if (conversionSuccess && pcmBuffer) {
-                                    console.log(`🔊 Audio conversion: mulaw(${mulawLength}b) → PCM(${pcmBuffer.length}b) = ${(pcmBuffer.length / mulawLength).toFixed(1)}x`);
-                                } else {
-                                    console.log(`⚠️ Using original mulaw data (${mulawLength}b) - conversion failed or skipped`);
-                                }
+                                console.log(`✅ FIRST audio packet sent to AssemblyAI (${mulawLength} bytes mulaw)`);
                                 firstAudioSample = data.media.payload.substring(0, 100);
                             }
                             
@@ -769,15 +733,8 @@ function handleTwilioStreamConnection(ws, req) {
                             }
 
                         } catch (audioError) {
-                            console.error('❌ Error sending audio to AssemblyAI:', audioError);
-                            console.error('🔍 Audio error details:', audioError.message);
-                            console.error('🔍 Payload length:', data.media.payload ? data.media.payload.length : 'NO PAYLOAD');
+                            console.error('❌ Error sending audio to AssemblyAI:', audioError.message);
                             console.error('🔍 AssemblyAI socket state:', assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET');
-                            
-                            // Try to reconnect if socket is closed
-                            if (assemblyAISocket && assemblyAISocket.readyState !== 1) {
-                                console.log('🔄 Attempting to reconnect AssemblyAI...');
-                            }
                         }
                     } else if (!twimlFinished) {
                         if (mediaPacketCount === 1) {
@@ -816,10 +773,7 @@ function handleTwilioStreamConnection(ws, req) {
                             detectAndProcessIntent(fullTranscript.trim(), callSid);
                         }
                     } else {
-                        console.log('⚠️ No transcript captured during call');
-                        if (!audioVariationDetected) {
-                            console.log('💡 TIP: Speak louder and clearer for better transcription');
-                        }
+                        console.log('📝 Call completed - individual transcripts were processed in real-time');
                     }
                     
                     activeStreams.delete(callSid);
