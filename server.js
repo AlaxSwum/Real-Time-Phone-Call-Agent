@@ -168,13 +168,11 @@ app.post('/webhook/voice', (req, res) => {
     
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! Please wait for the beep, then speak clearly.</Say>
+    <Say voice="alice">Hello! Please speak your message.</Say>
     <Start>
         <Stream url="${streamUrl}" track="inbound_track" />
     </Start>
-    <Pause length="2"/>
-    <Play>https://demo.twilio.com/docs/classic.mp3</Play>
-    <Pause length="15"/>
+    <Pause length="18"/>
     <Say voice="alice">Thank you. Goodbye!</Say>
 </Response>`;
     
@@ -455,7 +453,7 @@ function handleTwilioStreamConnection(ws, req) {
     setTimeout(() => {
         twimlFinished = true;
         console.log('🎙️ TwiML playback should be finished, starting audio capture...');
-    }, 6000); // Wait 6 seconds for TwiML to finish (Hello + beep + pause)
+    }, 4000); // Wait 4 seconds for TwiML to finish
     
     ws.on('message', (message) => {
         try {
