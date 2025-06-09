@@ -163,13 +163,12 @@ app.post('/webhook/voice', (req, res) => {
     
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! Welcome to the Real-Time Call Processor. Your call is being transcribed live by our AI system.</Say>
+    <Say voice="alice">Hello! Please speak your message.</Say>
     <Start>
         <Stream url="${streamUrl}" />
     </Start>
-    <Say voice="alice">Please speak your message. I'm listening and transcribing in real-time.</Say>
-    <Pause length="30"/>
-    <Say voice="alice">Thank you for your message. It has been processed by our AI system. Goodbye!</Say>
+    <Pause length="15"/>
+    <Say voice="alice">Thank you. Goodbye!</Say>
 </Response>`;
     
     console.log('📋 TwiML Response:', twiml);
