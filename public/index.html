@@ -1015,7 +1015,16 @@
         }
         
         // Start dashboard when page loads
-        window.addEventListener('load', initDashboard);
+        window.addEventListener('load', () => {
+            initDashboard();
+            // Auto-connect WebSocket after dashboard initialization
+            setTimeout(() => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    log('🔌 Auto-connecting WebSocket...');
+                    connectWebSocket();
+                }
+            }, 1000);
+        });
     </script>
 </body>
 </html> 
