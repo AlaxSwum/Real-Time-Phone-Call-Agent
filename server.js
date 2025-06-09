@@ -176,9 +176,15 @@ app.post('/webhook/recording', async (req, res) => {
     
     // Log AI results for monitoring
     if (aiResult.processed) {
-        console.log('🎯 Intent detected:', aiResult.analysis?.intent);
-        console.log('⚡ Urgency level:', aiResult.analysis?.urgency);
-        console.log('📋 Summary:', aiResult.analysis?.summary);
+        console.log('🎯 INTENT DETECTED:', aiResult.analysis?.intent);
+        console.log('⚡ URGENCY LEVEL:', aiResult.analysis?.urgency);
+        console.log('😊 SENTIMENT:', aiResult.analysis?.sentiment);
+        console.log('📋 AI SUMMARY:', aiResult.analysis?.summary);
+        console.log('🎯 RECOMMENDED ACTION:', aiResult.analysis?.follow_up);
+        if (aiResult.analysis?.key_info && aiResult.analysis.key_info.length > 0) {
+            console.log('🔑 KEY INFORMATION:', aiResult.analysis.key_info.join(', '));
+        }
+        console.log('🤖 Full AI analysis sent to n8n webhook');
     } else {
         console.log('❌ AI processing failed:', aiResult.error);
     }
@@ -227,15 +233,59 @@ app.post('/test/ai-processing', async (req, res) => {
     }
 });
 
+// Helper function to download Twilio recordings with authentication
+async function downloadTwilioRecording(recordingUrl) {
+    try {
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
+        
+        if (!accountSid || !authToken) {
+            throw new Error('Twilio credentials missing');
+        }
+        
+        // Create basic auth header
+        const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        
+        console.log('📡 Fetching recording with Twilio credentials...');
+        const response = await fetch(recordingUrl, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Basic ${auth}`,
+                'User-Agent': 'Real-Time-Call-Processor/1.0'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
+        }
+        
+        const audioBuffer = await response.arrayBuffer();
+        console.log(`✅ Downloaded ${audioBuffer.byteLength} bytes from Twilio`);
+        
+        return Buffer.from(audioBuffer);
+    } catch (error) {
+        console.error('❌ Error downloading Twilio recording:', error);
+        throw error;
+    }
+}
+
 // AI Processing Functions
 async function processAudioWithAI(audioData) {
     try {
         console.log('🤖 Starting AI processing for audio:', audioData.url);
         
-        // Step 1: Transcribe audio with AssemblyAI
+        // Step 1: Download audio from Twilio with authentication
+        console.log('📥 Downloading audio from Twilio...');
+        const audioBuffer = await downloadTwilioRecording(audioData.url);
+        
+        // Step 2: Upload to AssemblyAI for transcription
+        console.log('📤 Uploading to AssemblyAI...');
+        const uploadUrl = await assemblyAI.files.upload(audioBuffer);
+        
+        // Step 3: Transcribe audio with AssemblyAI
         console.log('📝 Starting transcription...');
         const transcript = await assemblyAI.transcripts.create({
-            audio_url: audioData.url,
+            audio_url: uploadUrl,
             language_detection: true,
             speaker_labels: true,
             sentiment_analysis: true,
@@ -256,7 +306,8 @@ async function processAudioWithAI(audioData) {
         }
         
         const transcriptText = transcriptResult.text;
-        console.log('✅ Transcription completed:', transcriptText);
+        console.log('✅ Transcription completed!');
+        console.log('🗣️ CALLER SAID: "' + transcriptText + '"');
         
         // Step 2: Analyze intent and generate response with OpenAI
         console.log('🧠 Analyzing intent and generating response...');
