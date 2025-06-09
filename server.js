@@ -125,13 +125,9 @@ function detectAndProcessIntent(text, callSid) {
     let detectedIntent = null;
     let confidence = 0;
     
-    // Email intent detection
-    const emailKeywords = ['email', 'e-mail', 'send email', 'email me', 'my email', 'email address'];
-    const emailMatch = emailKeywords.some(keyword => lowerText.includes(keyword));
-    
-    // Booking intent detection  
-    const bookingKeywords = ['book', 'booking', 'appointment', 'schedule', 'meeting', 'reserve', 'reservation'];
-    const bookingMatch = bookingKeywords.some(keyword => lowerText.includes(keyword));
+    // Meeting intent detection
+    const meetingKeywords = ['meeting', 'discuss', 'conversation', 'talk', 'chat', 'catch up'];
+    const meetingMatch = meetingKeywords.some(keyword => lowerText.includes(keyword));
     
     // Support intent detection
     const supportKeywords = ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'];
@@ -142,11 +138,8 @@ function detectAndProcessIntent(text, callSid) {
     const infoMatch = infoKeywords.some(keyword => lowerText.includes(keyword));
     
     // Determine primary intent
-    if (emailMatch) {
-        detectedIntent = 'email_request';
-        confidence = 0.8;
-    } else if (bookingMatch) {
-        detectedIntent = 'booking_request';
+    if (meetingMatch) {
+        detectedIntent = 'meeting_discussion';
         confidence = 0.85;
     } else if (supportMatch) {
         detectedIntent = 'support_request';
@@ -201,8 +194,7 @@ function detectAndProcessIntent(text, callSid) {
 // Helper function to get matched keywords for intent
 function getMatchedKeywords(lowerText, intent) {
     const keywordSets = {
-        'email_request': ['email', 'e-mail', 'send email', 'email me', 'my email', 'email address'],
-        'booking_request': ['book', 'booking', 'appointment', 'schedule', 'meeting', 'reserve', 'reservation'],
+        'meeting_discussion': ['meeting', 'discuss', 'conversation', 'talk', 'chat', 'catch up'],
         'support_request': ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'],
         'information_request': ['information', 'info', 'details', 'tell me', 'what is', 'how much', 'price'],
         'general_inquiry': []
@@ -343,15 +335,23 @@ async function analyzeTranscriptWithAI(text, callSid) {
             messages: [
                 {
                     role: "system",
-                    content: `You are an AI assistant for a real-time call processing system. Analyze the following voice message and provide a JSON response with:
+                    content: `You are an AI assistant for a real-time call processing system. Analyze the following voice message focusing on meeting discussions and provide a JSON response with:
                     {
-                        "intent": "primary intent category",
+                        "intent": "meeting_discussion/support_request/information_request/general_inquiry",
                         "urgency": "low/medium/high",
                         "key_info": ["extracted information items"],
                         "sentiment": "positive/neutral/negative",
                         "follow_up": "recommended action",
                         "summary": "brief professional summary"
-                    }`
+                    }
+                    
+                    For meeting discussions, focus on:
+                    1. The topic or purpose of the meeting/discussion
+                    2. Key points or concerns raised
+                    3. Any decisions or conclusions reached
+                    4. Participants mentioned
+                    
+                    Do NOT include scheduling or booking-related information in the response.`
                 },
                 {
                     role: "user",
