@@ -29,8 +29,11 @@ if (NODE_ENV === 'production') {
             directives: {
                 defaultSrc: ["'self'"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
-                scriptSrc: ["'self'"],
+                scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+                scriptSrcAttr: ["'self'", "'unsafe-inline'"],
                 imgSrc: ["'self'", "data:", "https:"],
+                connectSrc: ["'self'", "ws:", "wss:", "https:"],
+                fontSrc: ["'self'", "data:", "https:"]
             },
         },
         hsts: {
@@ -39,7 +42,7 @@ if (NODE_ENV === 'production') {
             preload: true
         }
     }));
-    console.log('✅ Production security enabled');
+    console.log('✅ Production security enabled (relaxed CSP for dashboard)');
 } else {
     console.log('⚠️ Development mode - reduced security');
 }
