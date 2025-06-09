@@ -60,6 +60,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static files from public directory
 app.use(express.static('public'));
 
+// Global variables for real-time functionality
+let dashboardClients = new Set();
+let activeStreams = new Map();
+
 // Basic health check endpoint
 app.get('/health', (req, res) => {
     res.json({ 
@@ -71,7 +75,8 @@ app.get('/health', (req, res) => {
             assemblyai: !!process.env.ASSEMBLYAI_API_KEY
         },
         n8n_webhook: !!process.env.N8N_WEBHOOK_URL,
-        twilio_phone: process.env.TWILIO_PHONE_NUMBER || '+441733964789'
+        twilio_phone: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+        active_calls: activeStreams.size
     });
 });
 
@@ -84,19 +89,33 @@ app.get('/', (req, res) => {
 app.get('/api', (req, res) => {
     res.json({
         message: 'Real-Time Call Processor API',
-        version: '1.0.0',
+        version: '2.0.0',
         environment: NODE_ENV,
         endpoints: {
             health: '/health',
             voice_webhook: '/webhook/voice',
             dashboard: '/',
-            websocket: 'ws://your-render-url',
+            websocket: '/ws',
+            stream: '/stream',
             documentation: 'https://github.com/AlaxSwum/Real-Time-Phone-Call-Agent'
         }
     });
 });
 
-// Twilio Voice Webhook Endpoint
+// Function to broadcast to all dashboard clients
+function broadcastToClients(message) {
+    dashboardClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            try {
+                client.send(JSON.stringify(message));
+            } catch (error) {
+                console.error('❌ Error broadcasting to client:', error);
+            }
+        }
+    });
+}
+
+// Twilio Voice Webhook Endpoint - REAL-TIME STREAMING
 app.post('/webhook/voice', (req, res) => {
     console.log('📞 Incoming call received from Twilio');
     console.log('📋 Call details:', req.body);
@@ -123,207 +142,46 @@ app.post('/webhook/voice', (req, res) => {
         });
     }
     
-    // TwiML response for handling the call
+    // Broadcast call start to all connected dashboard clients
+    broadcastToClients({
+        type: 'call_started',
+        data: {
+            from: From,
+            to: To,
+            callSid: CallSid,
+            direction: Direction,
+            timestamp: new Date().toISOString()
+        }
+    });
+    
+    // TwiML response for real-time streaming
+    const streamUrl = `wss://real-time-phone-call-agent.onrender.com/stream/${CallSid}`;
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! Welcome to the Real-Time Call Processor. Your call is being processed by our AI system.</Say>
-    <Record 
-        action="https://real-time-phone-call-agent.onrender.com/webhook/recording"
-        method="POST"
-        maxLength="60"
-        playBeep="true"
-        recordingStatusCallback="https://real-time-phone-call-agent.onrender.com/webhook/recording-status"
-    />
+    <Say voice="alice">Hello! Welcome to the Real-Time Call Processor. Your call is being transcribed live by our AI system.</Say>
+    <Start>
+        <Stream url="${streamUrl}" />
+    </Start>
+    <Say voice="alice">Please speak your message. I'm listening and transcribing in real-time.</Say>
+    <Pause length="30"/>
+    <Say voice="alice">Thank you for your message. It has been processed by our AI system. Goodbye!</Say>
 </Response>`;
     
     res.type('text/xml');
     res.send(twiml);
 });
 
-// Twilio Recording Webhook
-app.post('/webhook/recording', async (req, res) => {
-    console.log('🎙️ Recording completed:', req.body);
-    
-    const { RecordingUrl, CallSid, RecordingDuration } = req.body;
-    
-    console.log(`🎵 Recording URL: ${RecordingUrl}`);
-    console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
-    
-    // Process recording with AI - REAL IMPLEMENTATION
-    console.log('🚀 Starting AI processing...');
-    const aiResult = await processAudioWithAI({ url: RecordingUrl });
-    
-    // Enhanced data payload for n8n
-    const enhancedPayload = {
-        type: 'twilio_recording_with_ai',
-        call_data: req.body,
-        ai_processing: aiResult,
-        timestamp: new Date().toISOString()
-    };
-    
-    // Send recording data with AI analysis to n8n if configured
-    if (process.env.N8N_WEBHOOK_URL) {
-        fetch(process.env.N8N_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(enhancedPayload)
-        }).then(response => {
-            console.log('✅ Enhanced data sent to n8n webhook:', response.status);
-        }).catch(error => {
-            console.error('❌ Error sending enhanced data to n8n:', error);
-        });
-    }
-    
-    // Log AI results for monitoring
-    if (aiResult.processed) {
-        console.log('🎯 INTENT DETECTED:', aiResult.analysis?.intent);
-        console.log('⚡ URGENCY LEVEL:', aiResult.analysis?.urgency);
-        console.log('😊 SENTIMENT:', aiResult.analysis?.sentiment);
-        console.log('📋 AI SUMMARY:', aiResult.analysis?.summary);
-        console.log('🎯 RECOMMENDED ACTION:', aiResult.analysis?.follow_up);
-        if (aiResult.analysis?.key_info && aiResult.analysis.key_info.length > 0) {
-            console.log('🔑 KEY INFORMATION:', aiResult.analysis.key_info.join(', '));
-        }
-        console.log('🤖 Full AI analysis sent to n8n webhook');
-    } else {
-        console.log('❌ AI processing failed:', aiResult.error);
-    }
-    
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="alice">Thank you for your message. It has been processed and analyzed by our AI system. We will respond accordingly. Goodbye!</Say>
-</Response>`;
-    
-    res.type('text/xml');
-    res.send(twiml);
-});
-
-// Twilio Recording Status Webhook
-app.post('/webhook/recording-status', (req, res) => {
-    console.log('📊 Recording status update:', req.body);
-    res.status(200).send('OK');
-});
-
-// Manual AI Processing Test Endpoint
-app.post('/test/ai-processing', async (req, res) => {
-    const { recording_url } = req.body;
-    
-    if (!recording_url) {
-        return res.status(400).json({ 
-            error: 'Missing recording_url in request body',
-            example: { recording_url: 'https://your-recording-url.mp3' }
-        });
-    }
-    
-    console.log('🧪 Manual AI processing test for:', recording_url);
-    
+// Analyze transcript with OpenAI
+async function analyzeTranscriptWithAI(text, callSid) {
     try {
-        const result = await processAudioWithAI({ url: recording_url });
-        res.json({
-            success: true,
-            result: result,
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Helper function to download Twilio recordings with authentication
-async function downloadTwilioRecording(recordingUrl) {
-    try {
-        const accountSid = process.env.TWILIO_ACCOUNT_SID;
-        const authToken = process.env.TWILIO_AUTH_TOKEN;
+        console.log('🧠 Analyzing transcript with OpenAI...');
         
-        if (!accountSid || !authToken) {
-            throw new Error('Twilio credentials missing');
-        }
-        
-        // Create basic auth header
-        const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-        
-        console.log('📡 Fetching recording with Twilio credentials...');
-        const response = await fetch(recordingUrl, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Basic ${auth}`,
-                'User-Agent': 'Real-Time-Call-Processor/1.0'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
-        }
-        
-        const audioBuffer = await response.arrayBuffer();
-        console.log(`✅ Downloaded ${audioBuffer.byteLength} bytes from Twilio`);
-        
-        return Buffer.from(audioBuffer);
-    } catch (error) {
-        console.error('❌ Error downloading Twilio recording:', error);
-        throw error;
-    }
-}
-
-// AI Processing Functions
-async function processAudioWithAI(audioData) {
-    try {
-        console.log('🤖 Starting AI processing for audio:', audioData.url);
-        
-        // Step 1: Download audio from Twilio with authentication
-        console.log('📥 Downloading audio from Twilio...');
-        const audioBuffer = await downloadTwilioRecording(audioData.url);
-        
-        // Step 2: Upload to AssemblyAI for transcription
-        console.log('📤 Uploading to AssemblyAI...');
-        const uploadUrl = await assemblyAI.files.upload(audioBuffer);
-        
-        // Step 3: Transcribe audio with AssemblyAI
-        console.log('📝 Starting transcription...');
-        const transcript = await assemblyAI.transcripts.create({
-            audio_url: uploadUrl,
-            language_detection: true,
-            speaker_labels: true,
-            sentiment_analysis: true,
-            entity_detection: true,
-            iab_categories: true
-        });
-        
-        // Wait for transcription to complete
-        let transcriptResult = transcript;
-        while (transcriptResult.status !== 'completed' && transcriptResult.status !== 'error') {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            transcriptResult = await assemblyAI.transcripts.get(transcript.id);
-            console.log('⏳ Transcription status:', transcriptResult.status);
-        }
-        
-        if (transcriptResult.status === 'error') {
-            throw new Error(`Transcription failed: ${transcriptResult.error}`);
-        }
-        
-        const transcriptText = transcriptResult.text;
-        console.log('✅ Transcription completed!');
-        console.log('🗣️ CALLER SAID: "' + transcriptText + '"');
-        
-        // Step 2: Analyze intent and generate response with OpenAI
-        console.log('🧠 Analyzing intent and generating response...');
         const aiResponse = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
                 {
                     role: "system",
-                    content: `You are an AI assistant for a real-time call processing system. Analyze the following voice message and:
-                    1. Identify the caller's intent (inquiry, complaint, request, booking, etc.)
-                    2. Extract key information (contact details, dates, specific requests)
-                    3. Determine urgency level (low, medium, high)
-                    4. Suggest appropriate follow-up actions
-                    5. Generate a professional summary
-                    
-                    Provide your response in this JSON format:
+                    content: `You are an AI assistant for a real-time call processing system. Analyze the following voice message and provide a JSON response with:
                     {
                         "intent": "primary intent category",
                         "urgency": "low/medium/high",
@@ -335,79 +193,91 @@ async function processAudioWithAI(audioData) {
                 },
                 {
                     role: "user",
-                    content: `Voice message transcription: "${transcriptText}"`
+                    content: `Voice message: "${text}"`
                 }
             ],
             temperature: 0.3
         });
         
-        let aiAnalysis;
+        let analysis;
         try {
-            aiAnalysis = JSON.parse(aiResponse.choices[0].message.content);
+            analysis = JSON.parse(aiResponse.choices[0].message.content);
         } catch (parseError) {
-            // Fallback if JSON parsing fails
-            aiAnalysis = {
+            analysis = {
                 intent: "general_inquiry",
                 urgency: "medium",
-                key_info: [transcriptText.substring(0, 100)],
+                key_info: [text.substring(0, 100)],
                 sentiment: "neutral",
                 follow_up: "Review and respond appropriately",
                 summary: aiResponse.choices[0].message.content
             };
         }
         
-        console.log('✅ AI analysis completed:', aiAnalysis);
+        console.log('🎯 INTENT DETECTED:', analysis.intent);
+        console.log('⚡ URGENCY LEVEL:', analysis.urgency);
+        console.log('😊 SENTIMENT:', analysis.sentiment);
+        console.log('📋 AI SUMMARY:', analysis.summary);
         
-        return {
-            transcript: transcriptText,
-            analysis: aiAnalysis,
-            audio_insights: {
-                sentiment: transcriptResult.sentiment_analysis_results,
-                entities: transcriptResult.entities,
-                categories: transcriptResult.iab_categories_result
-            },
-            processed: true,
-            timestamp: new Date().toISOString()
-        };
+        // Broadcast AI analysis to dashboard
+        broadcastToClients({
+            type: 'ai_analysis',
+            data: {
+                callSid: callSid,
+                transcript: text,
+                analysis: analysis,
+                timestamp: new Date().toISOString()
+            }
+        });
+        
+        // Send to n8n webhook
+        if (process.env.N8N_WEBHOOK_URL) {
+            fetch(process.env.N8N_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'live_ai_analysis',
+                    callSid: callSid,
+                    transcript: text,
+                    analysis: analysis,
+                    timestamp: new Date().toISOString()
+                })
+            }).catch(error => {
+                console.error('❌ Error sending to n8n webhook:', error);
+            });
+        }
+        
     } catch (error) {
-        console.error('❌ AI processing error:', error);
-        return {
-            error: `AI processing failed: ${error.message}`,
-            processed: false,
-            timestamp: new Date().toISOString()
-        };
+        console.error('❌ AI analysis error:', error);
     }
 }
 
-// WebSocket server for real-time communication
-const wss = new WebSocket.Server({ 
+// Dashboard WebSocket server
+const dashboardWss = new WebSocket.Server({ 
     server,
     path: '/ws'
 });
 
+// Twilio Media Stream WebSocket server
+const streamWss = new WebSocket.Server({ 
+    server,
+    path: '/stream'
+});
+
 let activeConnections = 0;
 
-wss.on('connection', (ws, req) => {
+// Dashboard WebSocket connections
+dashboardWss.on('connection', (ws, req) => {
     activeConnections++;
+    dashboardClients.add(ws);
     const clientIP = req.socket.remoteAddress;
-    console.log(`🔌 New WebSocket connection from ${clientIP} (Total: ${activeConnections})`);
+    console.log(`🔌 New dashboard WebSocket connection from ${clientIP} (Total: ${activeConnections})`);
     
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
-            console.log('📧 Received message:', data.type);
+            console.log('📧 Received dashboard message:', data.type);
             
             switch (data.type) {
-                case 'audio':
-                    // Process audio with AI
-                    const aiResult = await processAudioWithAI(data.payload);
-                    ws.send(JSON.stringify({
-                        type: 'ai_response',
-                        data: aiResult,
-                        timestamp: new Date().toISOString()
-                    }));
-                    break;
-                    
                 case 'ping':
                     ws.send(JSON.stringify({
                         type: 'pong',
@@ -415,41 +285,174 @@ wss.on('connection', (ws, req) => {
                     }));
                     break;
                     
-                default:
-                    // Echo other messages
+                case 'get_active_calls':
                     ws.send(JSON.stringify({
-                        type: 'response',
-                        data: 'Message received successfully',
-                        original_type: data.type,
+                        type: 'active_calls',
+                        data: Array.from(activeStreams.values()),
                         timestamp: new Date().toISOString()
                     }));
+                    break;
+                    
+                default:
+                    console.log('Unknown dashboard message type:', data.type);
             }
         } catch (error) {
-            console.error('❌ Error parsing message:', error);
-            ws.send(JSON.stringify({
-                type: 'error',
-                message: 'Invalid message format',
-                timestamp: new Date().toISOString()
-            }));
+            console.error('❌ Dashboard WebSocket message error:', error);
         }
     });
     
     ws.on('close', () => {
         activeConnections--;
-        console.log(`🔌 WebSocket connection closed (Remaining: ${activeConnections})`);
+        dashboardClients.delete(ws);
+        console.log(`🔌 Dashboard WebSocket disconnected (Total: ${activeConnections})`);
     });
     
     ws.on('error', (error) => {
-        console.error('❌ WebSocket error:', error);
+        console.error('❌ Dashboard WebSocket error:', error);
     });
     
     // Send welcome message
     ws.send(JSON.stringify({
         type: 'welcome',
-        message: 'Connected to Real-Time Call Processor',
-        server_time: new Date().toISOString(),
-        connection_id: Date.now()
+        message: 'Connected to Real-Time Call Processor Dashboard',
+        timestamp: new Date().toISOString()
     }));
+});
+
+// Twilio Media Stream WebSocket connections
+streamWss.on('connection', (ws, req) => {
+    const urlParts = req.url.split('/');
+    const callSid = urlParts[urlParts.length - 1];
+    console.log(`🎙️ New Twilio stream connection for call: ${callSid}`);
+    
+    // Initialize AssemblyAI real-time transcription
+    let assemblyAISocket = null;
+    let fullTranscript = '';
+    
+    if (process.env.ASSEMBLYAI_API_KEY) {
+        // Create real-time transcription session
+        assemblyAI.realtime.createSession({
+            sample_rate: 8000, // Twilio uses 8kHz
+            encoding: 'pcm_mulaw'
+        }).then(session => {
+            assemblyAISocket = session;
+            
+            session.on('transcript', (transcript) => {
+                if (transcript.text) {
+                    console.log(`🗣️ LIVE TRANSCRIPT: "${transcript.text}"`);
+                    
+                    // Add to full transcript
+                    if (transcript.message_type === 'FinalTranscript') {
+                        fullTranscript += transcript.text + ' ';
+                    }
+                    
+                    // Broadcast to dashboard clients
+                    broadcastToClients({
+                        type: 'live_transcript',
+                        data: {
+                            callSid: callSid,
+                            text: transcript.text,
+                            confidence: transcript.confidence,
+                            is_final: transcript.message_type === 'FinalTranscript',
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    
+                    // If final transcript, analyze with OpenAI
+                    if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 10) {
+                        analyzeTranscriptWithAI(transcript.text, callSid);
+                    }
+                }
+            });
+            
+            session.on('error', (error) => {
+                console.error('❌ AssemblyAI real-time error:', error);
+            });
+            
+            console.log('✅ AssemblyAI real-time session started for call:', callSid);
+        }).catch(error => {
+            console.error('❌ Failed to create AssemblyAI session:', error);
+        });
+    }
+    
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            
+            switch (data.event) {
+                case 'start':
+                    console.log('🎙️ Stream started:', data.start);
+                    activeStreams.set(callSid, {
+                        callSid: callSid,
+                        startTime: new Date(),
+                        transcript: '',
+                        status: 'active'
+                    });
+                    
+                    // Broadcast stream start
+                    broadcastToClients({
+                        type: 'stream_started',
+                        data: {
+                            callSid: callSid,
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    break;
+                    
+                case 'media':
+                    // Forward audio to AssemblyAI for real-time transcription
+                    if (assemblyAISocket && data.media.payload) {
+                        try {
+                            // Convert base64 to buffer and send to AssemblyAI
+                            const audioBuffer = Buffer.from(data.media.payload, 'base64');
+                            assemblyAISocket.sendAudio(audioBuffer);
+                        } catch (audioError) {
+                            console.error('❌ Error sending audio to AssemblyAI:', audioError);
+                        }
+                    }
+                    break;
+                    
+                case 'stop':
+                    console.log('🎙️ Stream stopped for call:', callSid);
+                    if (assemblyAISocket) {
+                        assemblyAISocket.close();
+                    }
+                    
+                    // Final analysis if we have a full transcript
+                    if (fullTranscript.trim().length > 10) {
+                        console.log('🗣️ FULL CALL TRANSCRIPT: "' + fullTranscript.trim() + '"');
+                        analyzeTranscriptWithAI(fullTranscript.trim(), callSid);
+                    }
+                    
+                    activeStreams.delete(callSid);
+                    
+                    // Broadcast stream end
+                    broadcastToClients({
+                        type: 'stream_ended',
+                        data: {
+                            callSid: callSid,
+                            fullTranscript: fullTranscript.trim(),
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    break;
+            }
+        } catch (error) {
+            console.error('❌ Stream message error:', error);
+        }
+    });
+    
+    ws.on('close', () => {
+        console.log(`🎙️ Stream connection closed for call: ${callSid}`);
+        if (assemblyAISocket) {
+            assemblyAISocket.close();
+        }
+        activeStreams.delete(callSid);
+    });
+    
+    ws.on('error', (error) => {
+        console.error('❌ Stream WebSocket error:', error);
+    });
 });
 
 // Error handling middleware
@@ -466,8 +469,8 @@ app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint not found',
         path: req.originalUrl,
-        available_endpoints: ['/', '/api', '/health', '/webhook/voice', '/webhook/recording', '/webhook/recording-status', '/test/ai-processing'],
-        websocket_path: '/ws'
+        available_endpoints: ['/', '/api', '/health', '/webhook/voice'],
+        websocket_paths: ['/ws', '/stream']
     });
 });
 
@@ -492,7 +495,13 @@ function gracefulShutdown(signal) {
         console.log(`✅ Closed ${connections.size}/${connections.size} connections`);
         
         // Close WebSocket connections
-        wss.clients.forEach((client) => {
+        dashboardWss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.close();
+            }
+        });
+        
+        streamWss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.close();
             }
@@ -515,7 +524,8 @@ server.listen(PORT, () => {
     console.log(`🚀 Real-Time Call Processor running on port ${PORT}`);
     console.log(`🌍 Environment: ${NODE_ENV}`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`🔌 WebSocket endpoint: ws://localhost:${PORT}/ws`);
+    console.log(`🔌 Dashboard WebSocket: ws://localhost:${PORT}/ws`);
+    console.log(`🎙️ Stream WebSocket: ws://localhost:${PORT}/stream`);
     if (NODE_ENV === 'production') {
         console.log('🛡️ Production security features enabled');
     }
