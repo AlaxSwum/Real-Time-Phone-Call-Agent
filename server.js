@@ -364,7 +364,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.5&auto_punctuation=true&filter_profanity=false', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.1&auto_punctuation=true&filter_profanity=false&word_boost=["hello","test","phone","call"]', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -448,6 +448,8 @@ function handleTwilioStreamConnection(ws, req) {
     let isUserSpeaking = false;
     let silenceBuffer = 0;
     let twimlFinished = false;
+    let firstAudioSample = null;
+    let audioVariationDetected = false;
     
     // Delay audio forwarding to avoid TwiML voice pickup
     setTimeout(() => {
@@ -508,6 +510,17 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             if (mediaPacketCount === 1) {
                                 console.log(`✅ FIRST audio packet sent to AssemblyAI successfully (after TwiML delay)`);
+                                console.log(`🔊 Audio payload sample: ${data.media.payload.substring(0, 50)}...`);
+                                firstAudioSample = data.media.payload.substring(0, 100);
+                            }
+                            
+                            // Check for audio variation (indicating speech)
+                            if (mediaPacketCount > 1 && !audioVariationDetected) {
+                                const currentSample = data.media.payload.substring(0, 100);
+                                if (currentSample !== firstAudioSample) {
+                                    audioVariationDetected = true;
+                                    console.log('🎙️ AUDIO VARIATION DETECTED - User is likely speaking!');
+                                }
                             }
                             if (mediaPacketCount % 200 === 0) {
                                 console.log(`🎵 Sent ${mediaPacketCount} audio packets to AssemblyAI`);
@@ -555,7 +568,11 @@ function handleTwilioStreamConnection(ws, req) {
                         }
                     } else {
                         console.log('⚠️ No transcript captured during call');
-                        console.log('💡 TIP: For better transcription - speak louder, clearer, closer to phone, reduce background noise');
+                        console.log(`🔊 Audio variation detected: ${audioVariationDetected ? 'YES' : 'NO'}`);
+                        if (!audioVariationDetected) {
+                            console.log('🔇 ISSUE: No audio variation detected - you may not be speaking loud enough or phone line is silent');
+                        }
+                        console.log('💡 TIP: For better transcription - speak MUCH LOUDER, clearer, closer to phone, reduce background noise');
                     }
                     
                     activeStreams.delete(callSid);
