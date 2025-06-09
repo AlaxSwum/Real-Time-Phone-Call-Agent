@@ -364,7 +364,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.1&auto_punctuation=true&filter_profanity=false&word_boost=["hello","test","phone","call"]', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.5&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help"]&enable_extra_session_information=true', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -385,13 +385,13 @@ function handleTwilioStreamConnection(ws, req) {
                     
                     if (transcript.message_type === 'SessionBegins') {
                         console.log('🎬 AssemblyAI session started:', transcript);
-                    } else if (transcript.text) {
+                    } else if (transcript.text && transcript.text.trim().length > 0) {
                         const confidence = Math.round((transcript.confidence || 0) * 100);
-                        const confidenceIcon = confidence > 70 ? '🔥' : confidence > 40 ? '⚡' : '⚠️';
+                        const confidenceIcon = confidence > 70 ? '🔥' : confidence > 40 ? '⚡' : confidence > 20 ? '🔸' : '⚠️';
                         console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
-                        console.log(`📊 Confidence: ${confidenceIcon} ${confidence}% ${confidence < 50 ? '(LOW CONFIDENCE)' : ''}`);
+                        console.log(`📊 Confidence: ${confidenceIcon} ${confidence}% ${confidence < 30 ? '(LOW CONFIDENCE - PHONE AUDIO)' : ''}`);
                         
-                        // Add to full transcript
+                        // Add to full transcript (accept lower confidence for phone audio)
                         if (transcript.message_type === 'FinalTranscript') {
                             fullTranscript += transcript.text + ' ';
                             console.log(`📝 FULL TRANSCRIPT SO FAR: "${fullTranscript.trim()}"`);
@@ -410,11 +410,13 @@ function handleTwilioStreamConnection(ws, req) {
                             }
                         });
                         
-                        // If final transcript, analyze with OpenAI (lower confidence threshold)
-                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 3) {
+                        // If final transcript, analyze with OpenAI (accept lower confidence for phone audio)
+                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 2) {
                             console.log('🧠 Sending to OpenAI for analysis...');
                             analyzeTranscriptWithAI(transcript.text, callSid);
                         }
+                    } else if (transcript.text === "" && transcript.confidence === 0) {
+                        console.log('🔇 Empty transcript received - audio may be too quiet or unclear');
                     } else if (transcript.message_type) {
                         console.log(`📡 AssemblyAI message type: ${transcript.message_type}`);
                     }
