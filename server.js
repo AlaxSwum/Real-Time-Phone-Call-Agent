@@ -254,22 +254,36 @@ async function analyzeTranscriptWithAI(text, callSid) {
     }
 }
 
-// Dashboard WebSocket server
-const dashboardWss = new WebSocket.Server({ 
+// Single WebSocket server with path routing
+const wss = new WebSocket.Server({ 
     server,
-    path: '/ws'
-});
-
-// Twilio Media Stream WebSocket server
-const streamWss = new WebSocket.Server({ 
-    server,
-    path: '/stream'
+    verifyClient: (info) => {
+        console.log(`🔍 WebSocket connection attempt to: ${info.req.url}`);
+        console.log(`🔍 Headers:`, info.req.headers);
+        return true; // Allow all connections
+    }
 });
 
 let activeConnections = 0;
 
-// Dashboard WebSocket connections
-dashboardWss.on('connection', (ws, req) => {
+wss.on('connection', (ws, req) => {
+    const urlPath = req.url;
+    console.log(`🔌 NEW WEBSOCKET CONNECTION to path: ${urlPath}`);
+    
+    if (urlPath.startsWith('/stream/')) {
+        // This is a Twilio Media Stream connection
+        handleTwilioStreamConnection(ws, req);
+    } else if (urlPath === '/ws') {
+        // This is a dashboard connection
+        handleDashboardConnection(ws, req);
+    } else {
+        console.log(`❌ Unknown WebSocket path: ${urlPath}`);
+        ws.close();
+    }
+});
+
+// Dashboard WebSocket handler
+function handleDashboardConnection(ws, req) {
     activeConnections++;
     dashboardClients.add(ws);
     const clientIP = req.socket.remoteAddress;
@@ -320,10 +334,10 @@ dashboardWss.on('connection', (ws, req) => {
         message: 'Connected to Real-Time Call Processor Dashboard',
         timestamp: new Date().toISOString()
     }));
-});
+}
 
-// Twilio Media Stream WebSocket connections
-streamWss.on('connection', (ws, req) => {
+// Twilio Media Stream WebSocket handler  
+function handleTwilioStreamConnection(ws, req) {
     const urlParts = req.url.split('/');
     const callSid = urlParts[urlParts.length - 1];
     console.log(`🎙️ NEW TWILIO STREAM CONNECTION for call: ${callSid}`);
@@ -509,7 +523,7 @@ streamWss.on('connection', (ws, req) => {
     ws.on('error', (error) => {
         console.error('❌ Stream WebSocket error:', error);
     });
-});
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -551,13 +565,7 @@ function gracefulShutdown(signal) {
         console.log(`✅ Closed ${connections.size}/${connections.size} connections`);
         
         // Close WebSocket connections
-        dashboardWss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.close();
-            }
-        });
-        
-        streamWss.clients.forEach((client) => {
+        wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.close();
             }
