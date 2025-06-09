@@ -353,6 +353,7 @@ function handleTwilioStreamConnection(ws, req) {
     
     if (process.env.ASSEMBLYAI_API_KEY) {
         console.log('🤖 Creating AssemblyAI real-time session...');
+        console.log('🔑 Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
@@ -363,56 +364,71 @@ function handleTwilioStreamConnection(ws, req) {
             });
             
             assemblyAISocket = assemblyAIWS;
+            console.log('📡 AssemblyAI WebSocket state:', assemblyAIWS.readyState);
             
             assemblyAIWS.on('open', () => {
                 console.log('✅ ASSEMBLYAI REAL-TIME WEBSOCKET CONNECTED for call:', callSid);
+                console.log('📡 AssemblyAI connection state:', assemblyAIWS.readyState);
             });
             
             assemblyAIWS.on('message', (data) => {
-                const transcript = JSON.parse(data);
-                console.log('📥 Raw transcript event:', transcript);
-                
-                if (transcript.text) {
-                    console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
-                    console.log(`📊 Confidence: ${Math.round((transcript.confidence || 0) * 100)}%`);
+                try {
+                    const transcript = JSON.parse(data);
+                    console.log('📥 RAW ASSEMBLYAI MESSAGE:', JSON.stringify(transcript, null, 2));
                     
-                    // Add to full transcript
-                    if (transcript.message_type === 'FinalTranscript') {
-                        fullTranscript += transcript.text + ' ';
-                        console.log(`📝 FULL TRANSCRIPT SO FAR: "${fullTranscript.trim()}"`);
-                    }
-                    
-                    // Broadcast to dashboard clients
-                    broadcastToClients({
-                        type: 'live_transcript',
-                        data: {
-                            callSid: callSid,
-                            text: transcript.text,
-                            confidence: transcript.confidence,
-                            is_final: transcript.message_type === 'FinalTranscript',
-                            timestamp: new Date().toISOString()
+                    if (transcript.message_type === 'SessionBegins') {
+                        console.log('🎬 AssemblyAI session started:', transcript);
+                    } else if (transcript.text) {
+                        console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
+                        console.log(`📊 Confidence: ${Math.round((transcript.confidence || 0) * 100)}%`);
+                        
+                        // Add to full transcript
+                        if (transcript.message_type === 'FinalTranscript') {
+                            fullTranscript += transcript.text + ' ';
+                            console.log(`📝 FULL TRANSCRIPT SO FAR: "${fullTranscript.trim()}"`);
                         }
-                    });
-                    
-                    // If final transcript, analyze with OpenAI
-                    if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 10) {
-                        console.log('🧠 Sending to OpenAI for analysis...');
-                        analyzeTranscriptWithAI(transcript.text, callSid);
+                        
+                        // Broadcast to dashboard clients
+                        broadcastToClients({
+                            type: 'live_transcript',
+                            data: {
+                                callSid: callSid,
+                                text: transcript.text,
+                                confidence: transcript.confidence,
+                                is_final: transcript.message_type === 'FinalTranscript',
+                                timestamp: new Date().toISOString()
+                            }
+                        });
+                        
+                        // If final transcript, analyze with OpenAI
+                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 10) {
+                            console.log('🧠 Sending to OpenAI for analysis...');
+                            analyzeTranscriptWithAI(transcript.text, callSid);
+                        }
+                    } else if (transcript.message_type) {
+                        console.log(`📡 AssemblyAI message type: ${transcript.message_type}`);
                     }
+                } catch (parseError) {
+                    console.error('❌ Error parsing AssemblyAI message:', parseError);
+                    console.log('🔍 Raw data:', data.toString());
                 }
             });
             
             assemblyAIWS.on('error', (error) => {
                 console.error('❌ ASSEMBLYAI REAL-TIME ERROR:', error);
+                console.error('🔍 Error details:', error.message);
+                console.error('🔍 Error stack:', error.stack);
             });
             
-            assemblyAIWS.on('close', () => {
+            assemblyAIWS.on('close', (code, reason) => {
                 console.log('🔌 AssemblyAI WebSocket closed for call:', callSid);
+                console.log('🔍 Close code:', code, 'Reason:', reason.toString());
             });
             
         } catch (error) {
             console.error('❌ FAILED TO CREATE ASSEMBLYAI SESSION:', error);
             console.error('🔍 Error details:', error.message);
+            console.error('🔍 Error stack:', error.stack);
         }
     } else {
         console.log('⚠️ NO ASSEMBLYAI API KEY - Real-time transcription disabled');
@@ -428,6 +444,9 @@ function handleTwilioStreamConnection(ws, req) {
                 case 'start':
                     console.log('🎙️ STREAM STARTED for call:', callSid);
                     console.log('📋 Stream details:', JSON.stringify(data.start, null, 2));
+                    console.log('🔍 AssemblyAI socket status:', assemblyAISocket ? 'EXISTS' : 'MISSING');
+                    console.log('🔍 AssemblyAI ready state:', assemblyAISocket ? assemblyAISocket.readyState : 'N/A');
+                    
                     activeStreams.set(callSid, {
                         callSid: callSid,
                         startTime: new Date(),
@@ -447,6 +466,12 @@ function handleTwilioStreamConnection(ws, req) {
                     
                 case 'media':
                     mediaPacketCount++;
+                    if (mediaPacketCount === 1) {
+                        console.log(`🎵 FIRST AUDIO PACKET received from Twilio`);
+                        console.log(`🔍 Audio data length: ${data.media.payload ? data.media.payload.length : 'NO PAYLOAD'}`);
+                        console.log(`🔍 Audio sequence: ${data.media.sequence}`);
+                        console.log(`🔍 AssemblyAI socket state: ${assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET'}`);
+                    }
                     if (mediaPacketCount % 100 === 0) {
                         console.log(`📡 Received ${mediaPacketCount} audio packets from Twilio`);
                     }
@@ -460,11 +485,15 @@ function handleTwilioStreamConnection(ws, req) {
                             };
                             assemblyAISocket.send(JSON.stringify(audioMessage));
                             
+                            if (mediaPacketCount === 1) {
+                                console.log(`✅ FIRST audio packet sent to AssemblyAI successfully`);
+                            }
                             if (mediaPacketCount % 200 === 0) {
                                 console.log(`🎵 Sent ${mediaPacketCount} audio packets to AssemblyAI`);
                             }
                         } catch (audioError) {
                             console.error('❌ Error sending audio to AssemblyAI:', audioError);
+                            console.error('🔍 Audio error details:', audioError.message);
                         }
                     } else if (!assemblyAISocket) {
                         if (mediaPacketCount === 1) {
@@ -473,6 +502,11 @@ function handleTwilioStreamConnection(ws, req) {
                     } else if (assemblyAISocket.readyState !== 1) {
                         if (mediaPacketCount === 1) {
                             console.log(`⚠️ AssemblyAI socket not ready (state: ${assemblyAISocket.readyState})`);
+                            console.log(`🔍 Socket states: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED`);
+                        }
+                    } else if (!data.media.payload) {
+                        if (mediaPacketCount === 1) {
+                            console.log('⚠️ No audio payload in media packet');
                         }
                     }
                     break;
@@ -527,6 +561,48 @@ function handleTwilioStreamConnection(ws, req) {
         console.error('❌ Stream WebSocket error:', error);
     });
 }
+
+// Test AssemblyAI connection endpoint
+app.post('/test/assemblyai', async (req, res) => {
+    console.log('🧪 Testing AssemblyAI connection...');
+    
+    if (!process.env.ASSEMBLYAI_API_KEY) {
+        return res.json({
+            success: false,
+            error: 'No AssemblyAI API key configured'
+        });
+    }
+    
+    try {
+        // Test the API key with a simple request
+        const response = await fetch('https://api.assemblyai.com/v2/transcript', {
+            method: 'POST',
+            headers: {
+                'Authorization': process.env.ASSEMBLYAI_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                audio_url: 'https://storage.googleapis.com/aai-docs-samples/nbc.wav'
+            })
+        });
+        
+        const data = await response.json();
+        console.log('✅ AssemblyAI API test response:', data);
+        
+        res.json({
+            success: response.ok,
+            status: response.status,
+            api_key_valid: response.ok,
+            response: data
+        });
+    } catch (error) {
+        console.error('❌ AssemblyAI API test failed:', error);
+        res.json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {

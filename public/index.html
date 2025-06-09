@@ -492,6 +492,10 @@
                             <span><span class="method post">POST</span> /test/ai-processing</span>
                             <button class="btn" onclick="showAITestModal()">Test AI</button>
                         </li>
+                        <li>
+                            <span><span class="method post">POST</span> /test/assemblyai</span>
+                            <button class="btn" onclick="testAssemblyAI()">🎙️ Test AssemblyAI</button>
+                        </li>
                     </ul>
                 </div>
                 
@@ -758,6 +762,35 @@
             document.getElementById('recording-url-input').value = '';
             document.getElementById('ai-test-status').className = 'test-status';
             log('🧪 AI testing modal opened');
+        }
+        
+        // Test AssemblyAI API
+        async function testAssemblyAI() {
+            log('🎙️ Testing AssemblyAI API connection...');
+            
+            try {
+                const response = await fetch('/test/assemblyai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✅ AssemblyAI API test successful!');
+                    log(`🔑 API Key: Valid`);
+                    log(`📋 Response: ${JSON.stringify(data.response, null, 2)}`);
+                    
+                    // Update service status
+                    document.getElementById('assemblyai-status').innerHTML = '✅ Connected & Working';
+                } else {
+                    log(`❌ AssemblyAI API test failed: ${data.error}`);
+                    document.getElementById('assemblyai-status').innerHTML = '❌ Failed';
+                }
+            } catch (error) {
+                log(`❌ AssemblyAI API test error: ${error.message}`);
+                document.getElementById('assemblyai-status').innerHTML = '❌ Error';
+            }
         }
         
         function closeAITestModal() {
