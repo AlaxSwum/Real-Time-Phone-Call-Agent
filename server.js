@@ -520,9 +520,13 @@ function handleTwilioStreamConnection(ws, req) {
                     }
                     
                     // Final analysis if we have a full transcript
-                    if (fullTranscript.trim().length > 10) {
+                    if (fullTranscript.trim().length > 0) {
                         console.log('🗣️ FULL CALL TRANSCRIPT: "' + fullTranscript.trim() + '"');
-                        analyzeTranscriptWithAI(fullTranscript.trim(), callSid);
+                        if (fullTranscript.trim().length > 3) {
+                            analyzeTranscriptWithAI(fullTranscript.trim(), callSid);
+                        } else {
+                            console.log('📝 Transcript too short for AI analysis (under 3 chars)');
+                        }
                     } else {
                         console.log('⚠️ No transcript captured during call');
                     }
