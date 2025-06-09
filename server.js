@@ -366,7 +366,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=true&speech_threshold=0.3&auto_punctuation=true&filter_profanity=false&encoding=pcm_mulaw&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help"]&enable_extra_session_information=true', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.2&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help"]&enable_extra_session_information=true', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -381,12 +381,26 @@ function handleTwilioStreamConnection(ws, req) {
             });
             
             assemblyAIWS.on('message', (data) => {
+                lastTranscriptTime = Date.now(); // Update timestamp for timeout monitoring
                 try {
                     const transcript = JSON.parse(data);
                     console.log('📥 RAW ASSEMBLYAI MESSAGE:', JSON.stringify(transcript, null, 2));
                     
                     if (transcript.message_type === 'SessionBegins') {
                         console.log('🎬 AssemblyAI session started:', transcript);
+                        console.log('🔧 Session info - ID:', transcript.session_id, 'Expires:', transcript.expires_at);
+                    } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
+                        console.log(`🎯 TRANSCRIPT TYPE: ${transcript.message_type}`);
+                        console.log(`🎯 TEXT: "${transcript.text || 'EMPTY'}"`);
+                        console.log(`🎯 CONFIDENCE: ${transcript.confidence || 0}`);
+                        console.log(`🎯 WORDS: ${transcript.words ? transcript.words.length : 0}`);
+                        
+                        // Clear timeout when we get actual transcripts
+                        if (transcriptTimeout && transcript.text && transcript.text.length > 0) {
+                            clearInterval(transcriptTimeout);
+                            transcriptTimeout = null;
+                            console.log('✅ Transcript timeout cleared - receiving transcripts successfully');
+                        }
                     } else if (transcript.text !== undefined) {
                         const confidence = Math.round((transcript.confidence || 0) * 100);
                         const confidenceIcon = confidence > 70 ? '🔥' : confidence > 40 ? '⚡' : confidence > 20 ? '🔸' : '⚠️';
@@ -433,12 +447,54 @@ function handleTwilioStreamConnection(ws, req) {
             assemblyAIWS.on('error', (error) => {
                 console.error('❌ ASSEMBLYAI REAL-TIME ERROR:', error);
                 console.error('🔍 Error details:', error.message);
+                console.error('🔍 Error code:', error.code);
                 console.error('🔍 Error stack:', error.stack);
+                
+                // Broadcast error to dashboard
+                broadcastToClients({
+                    type: 'assemblyai_error',
+                    message: `AssemblyAI Error: ${error.message}`,
+                    data: {
+                        callSid: callSid,
+                        error: error.message,
+                        timestamp: new Date().toISOString()
+                    }
+                });
             });
             
             assemblyAIWS.on('close', (code, reason) => {
                 console.log('🔌 AssemblyAI WebSocket closed for call:', callSid);
                 console.log('🔍 Close code:', code, 'Reason:', reason.toString());
+                console.log('🔍 Standard close codes: 1000=Normal, 1001=GoingAway, 1005=NoStatus, 1006=Abnormal');
+                
+                // Broadcast close info to dashboard
+                broadcastToClients({
+                    type: 'assemblyai_closed',
+                    message: `AssemblyAI connection closed (code: ${code})`,
+                    data: {
+                        callSid: callSid,
+                        closeCode: code,
+                        reason: reason.toString(),
+                        timestamp: new Date().toISOString()
+                    }
+                });
+            });
+            
+            // Add a timeout to detect if AssemblyAI is not responding
+            let lastTranscriptTime = Date.now();
+            let transcriptTimeout = setInterval(() => {
+                const timeSinceLastTranscript = Date.now() - lastTranscriptTime;
+                if (timeSinceLastTranscript > 10000 && mediaPacketCount > 100) { // 10 seconds without transcript
+                    console.log('⚠️ No transcript received from AssemblyAI for 10+ seconds despite sending audio');
+                    console.log(`🔍 Packets sent: ${mediaPacketCount}, Socket state: ${assemblyAIWS.readyState}`);
+                }
+            }, 5000);
+            
+            // Clear transcript timeout on close
+            assemblyAIWS.on('close', () => {
+                if (transcriptTimeout) {
+                    clearInterval(transcriptTimeout);
+                }
             });
             
         } catch (error) {
@@ -507,8 +563,8 @@ function handleTwilioStreamConnection(ws, req) {
                     // Forward audio to AssemblyAI for real-time transcription (only after TwiML finishes)
                     if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
                         try {
-                            // Send audio data to AssemblyAI - Twilio sends base64-encoded mulaw audio
-                            // AssemblyAI expects the base64 payload directly for mulaw encoding
+                            // Twilio sends mulaw-encoded audio as base64 
+                            // Send directly to AssemblyAI - it should auto-detect mulaw format
                             const audioMessage = {
                                 audio_data: data.media.payload
                             };
@@ -519,7 +575,16 @@ function handleTwilioStreamConnection(ws, req) {
                                 console.log(`🔊 Audio payload length: ${data.media.payload.length} bytes`);
                                 console.log(`🔊 Audio payload sample: ${data.media.payload.substring(0, 50)}...`);
                                 console.log(`🔊 Media format: ${data.media ? data.media.chunk : 'unknown'}`);
+                                console.log(`🔊 Media timestamp: ${data.media ? data.media.timestamp : 'unknown'}`);
+                                console.log(`🔊 Decoded audio length: ${Buffer.from(data.media.payload, 'base64').length} bytes`);
                                 firstAudioSample = data.media.payload.substring(0, 100);
+                            }
+                            
+                            // Debug every 50th packet for audio quality monitoring
+                            if (mediaPacketCount % 50 === 0) {
+                                const currentSample = data.media.payload.substring(0, 50);
+                                const isVariation = currentSample !== firstAudioSample;
+                                console.log(`🎵 Packet ${mediaPacketCount}: Audio variation: ${isVariation ? 'YES' : 'NO'}`);
                             }
                             
                             // Check for audio variation (indicating speech)
@@ -536,6 +601,13 @@ function handleTwilioStreamConnection(ws, req) {
                         } catch (audioError) {
                             console.error('❌ Error sending audio to AssemblyAI:', audioError);
                             console.error('🔍 Audio error details:', audioError.message);
+                            console.error('🔍 Payload length:', data.media.payload ? data.media.payload.length : 'NO PAYLOAD');
+                            console.error('🔍 AssemblyAI socket state:', assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET');
+                            
+                            // Try to reconnect if socket is closed
+                            if (assemblyAISocket && assemblyAISocket.readyState !== 1) {
+                                console.log('🔄 Attempting to reconnect AssemblyAI...');
+                            }
                         }
                     } else if (!twimlFinished) {
                         if (mediaPacketCount === 1) {
@@ -675,7 +747,7 @@ app.get('/test/assemblyai-ws', (req, res) => {
     
     try {
         const WS = require('ws');
-        const testSocket = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=true&speech_threshold=0.3&encoding=pcm_mulaw', {
+        const testSocket = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.2', {
             headers: {
                 'Authorization': process.env.ASSEMBLYAI_API_KEY
             }
