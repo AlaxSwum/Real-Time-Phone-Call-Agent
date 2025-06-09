@@ -67,6 +67,58 @@ app.use(express.static('public'));
 let dashboardClients = new Set();
 let activeStreams = new Map();
 
+// Mulaw to PCM conversion function for AssemblyAI compatibility
+function convertMulawToPcm(mulawBuffer) {
+    // Mulaw decompression table (256 values)
+    const mulawToPcm = [
+        -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
+        -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
+        -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
+        -11900, -11388, -10876, -10364, -9852, -9340, -8828, -8316,
+        -7932, -7676, -7420, -7164, -6908, -6652, -6396, -6140,
+        -5884, -5628, -5372, -5116, -4860, -4604, -4348, -4092,
+        -3900, -3772, -3644, -3516, -3388, -3260, -3132, -3004,
+        -2876, -2748, -2620, -2492, -2364, -2236, -2108, -1980,
+        -1884, -1820, -1756, -1692, -1628, -1564, -1500, -1436,
+        -1372, -1308, -1244, -1180, -1116, -1052, -988, -924,
+        -876, -844, -812, -780, -748, -716, -684, -652,
+        -620, -588, -556, -524, -492, -460, -428, -396,
+        -372, -356, -340, -324, -308, -292, -276, -260,
+        -244, -228, -212, -196, -180, -164, -148, -132,
+        -120, -112, -104, -96, -88, -80, -72, -64,
+        -56, -48, -40, -32, -24, -16, -8, 0,
+        32124, 31100, 30076, 29052, 28028, 27004, 25980, 24956,
+        23932, 22908, 21884, 20860, 19836, 18812, 17788, 16764,
+        15996, 15484, 14972, 14460, 13948, 13436, 12924, 12412,
+        11900, 11388, 10876, 10364, 9852, 9340, 8828, 8316,
+        7932, 7676, 7420, 7164, 6908, 6652, 6396, 6140,
+        5884, 5628, 5372, 5116, 4860, 4604, 4348, 4092,
+        3900, 3772, 3644, 3516, 3388, 3260, 3132, 3004,
+        2876, 2748, 2620, 2492, 2364, 2236, 2108, 1980,
+        1884, 1820, 1756, 1692, 1628, 1564, 1500, 1436,
+        1372, 1308, 1244, 1180, 1116, 1052, 988, 924,
+        876, 844, 812, 780, 748, 716, 684, 652,
+        620, 588, 556, 524, 492, 460, 428, 396,
+        372, 356, 340, 324, 308, 292, 276, 260,
+        244, 228, 212, 196, 180, 164, 148, 132,
+        120, 112, 104, 96, 88, 80, 72, 64,
+        56, 48, 40, 32, 24, 16, 8, 0
+    ];
+    
+    // Convert mulaw bytes to 16-bit PCM samples
+    const pcmBuffer = Buffer.alloc(mulawBuffer.length * 2); // 16-bit = 2 bytes per sample
+    
+    for (let i = 0; i < mulawBuffer.length; i++) {
+        const mulawValue = mulawBuffer[i];
+        const pcmValue = mulawToPcm[mulawValue];
+        
+        // Write 16-bit PCM value in little-endian format
+        pcmBuffer.writeInt16LE(pcmValue, i * 2);
+    }
+    
+    return pcmBuffer;
+}
+
 // Basic health check endpoint
 app.get('/health', (req, res) => {
     res.json({ 
@@ -399,7 +451,7 @@ function handleTwilioStreamConnection(ws, req) {
                         if (transcriptTimeout && transcript.text && transcript.text.length > 0) {
                             clearInterval(transcriptTimeout);
                             transcriptTimeout = null;
-                            console.log('✅ Transcript timeout cleared - receiving transcripts successfully');
+                            console.log('✅ SUCCESS! Receiving real transcripts after mulaw→PCM conversion!');
                         }
                     } else if (transcript.text !== undefined) {
                         const confidence = Math.round((transcript.confidence || 0) * 100);
@@ -563,20 +615,42 @@ function handleTwilioStreamConnection(ws, req) {
                     // Forward audio to AssemblyAI for real-time transcription (only after TwiML finishes)
                     if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
                         try {
-                            // Twilio sends mulaw-encoded audio as base64 
-                            // Send directly to AssemblyAI - it should auto-detect mulaw format
-                            const audioMessage = {
-                                audio_data: data.media.payload
-                            };
-                            assemblyAISocket.send(JSON.stringify(audioMessage));
+                            // Twilio sends mulaw-encoded audio as base64
+                            // AssemblyAI real-time API needs PCM, so we need to convert mulaw to PCM
+                            let pcmBuffer = null;
+                            let conversionSuccess = false;
+                            
+                            try {
+                                const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+                                pcmBuffer = convertMulawToPcm(mulawBuffer);
+                                const pcmBase64 = pcmBuffer.toString('base64');
+                                
+                                const audioMessage = {
+                                    audio_data: pcmBase64
+                                };
+                                assemblyAISocket.send(JSON.stringify(audioMessage));
+                                conversionSuccess = true;
+                            } catch (conversionError) {
+                                console.error('❌ Error converting mulaw to PCM:', conversionError);
+                                // Fallback: send original data
+                                const audioMessage = {
+                                    audio_data: data.media.payload
+                                };
+                                assemblyAISocket.send(JSON.stringify(audioMessage));
+                                conversionSuccess = false;
+                            }
                             
                             if (mediaPacketCount === 1) {
+                                const mulawLength = Buffer.from(data.media.payload, 'base64').length;
                                 console.log(`✅ FIRST audio packet sent to AssemblyAI successfully (after TwiML delay)`);
-                                console.log(`🔊 Audio payload length: ${data.media.payload.length} bytes`);
-                                console.log(`🔊 Audio payload sample: ${data.media.payload.substring(0, 50)}...`);
-                                console.log(`🔊 Media format: ${data.media ? data.media.chunk : 'unknown'}`);
+                                console.log(`🔊 Original mulaw payload length: ${data.media.payload.length} bytes (base64)`);
+                                console.log(`🔊 Mulaw decoded length: ${mulawLength} bytes`);
+                                console.log(`🔊 Audio conversion: ${conversionSuccess ? 'SUCCESS' : 'FAILED - using original'}`);
+                                if (conversionSuccess && pcmBuffer) {
+                                    console.log(`🔊 PCM converted length: ${pcmBuffer.length} bytes`);
+                                    console.log(`🔊 Conversion ratio: ${(pcmBuffer.length / mulawLength).toFixed(1)}x (mulaw→PCM)`);
+                                }
                                 console.log(`🔊 Media timestamp: ${data.media ? data.media.timestamp : 'unknown'}`);
-                                console.log(`🔊 Decoded audio length: ${Buffer.from(data.media.payload, 'base64').length} bytes`);
                                 firstAudioSample = data.media.payload.substring(0, 100);
                             }
                             
