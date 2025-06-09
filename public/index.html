@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Call Processor - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        
+        .status-dot.online {
+            background: #28a745;
+        }
+        
+        .status-dot.offline {
+            background: #dc3545;
+        }
+        
+        .status-dot.loading {
+            background: #ffc107;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .btn:hover {
+            background: #5a6fd8;
+            transform: translateY(-2px);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .log {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+        
+        .endpoint-list {
+            list-style: none;
+        }
+        
+        .endpoint-list li {
+            background: white;
+            margin: 5px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .method {
+            background: #667eea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .method.post {
+            background: #28a745;
+        }
+        
+        .method.get {
+            background: #007bff;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            text-align: center;
+        }
+        
+        .info-item h4 {
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .webhook-test {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        
+        .webhook-test h4 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎙️ Real-Time Call Processor</h1>
+            <p>AI-Powered Voice Call Processing Dashboard</p>
+        </div>
+        
+        <div class="content">
+            <div class="grid">
+                <!-- System Status -->
+                <div class="card">
+                    <h3>📊 System Status</h3>
+                    <div class="status">
+                        <div class="status-dot loading" id="api-status"></div>
+                        <span id="api-status-text">Checking API...</span>
+                    </div>
+                    <div class="status">
+                        <div class="status-dot loading" id="ws-status"></div>
+                        <span id="ws-status-text">Checking WebSocket...</span>
+                    </div>
+                    <div class="status">
+                        <div class="status-dot loading" id="env-status"></div>
+                        <span id="env-status-text">Checking Environment...</span>
+                    </div>
+                    
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <h4>Environment</h4>
+                            <span id="environment">-</span>
+                        </div>
+                        <div class="info-item">
+                            <h4>Uptime</h4>
+                            <span id="uptime">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- API Endpoints -->
+                <div class="card">
+                    <h3>🔗 API Endpoints</h3>
+                    <ul class="endpoint-list">
+                        <li>
+                            <span><span class="method get">GET</span> /</span>
+                            <button class="btn" onclick="testEndpoint('/', 'GET')">Test</button>
+                        </li>
+                        <li>
+                            <span><span class="method get">GET</span> /health</span>
+                            <button class="btn" onclick="testEndpoint('/health', 'GET')">Test</button>
+                        </li>
+                        <li>
+                            <span><span class="method post">POST</span> /webhook/voice</span>
+                            <button class="btn" onclick="testWebhook('/webhook/voice')">Test</button>
+                        </li>
+                        <li>
+                            <span><span class="method post">POST</span> /webhook/recording</span>
+                            <button class="btn" onclick="testWebhook('/webhook/recording')">Test</button>
+                        </li>
+                    </ul>
+                </div>
+                
+                <!-- WebSocket Test -->
+                <div class="card">
+                    <h3>🔌 WebSocket Connection</h3>
+                    <p>Connection Status: <span id="ws-connection-status">Disconnected</span></p>
+                    <button class="btn" id="ws-connect-btn" onclick="toggleWebSocket()">Connect</button>
+                    <button class="btn" onclick="sendTestMessage()">Send Test Message</button>
+                    
+                    <div class="webhook-test">
+                        <h4>📞 Twilio Integration</h4>
+                        <p><strong>Webhook URL:</strong></p>
+                        <code id="webhook-url">Loading...</code>
+                        <br><br>
+                        <p>Configure this URL in your Twilio phone number settings.</p>
+                    </div>
+                </div>
+                
+                <!-- Service Information -->
+                <div class="card">
+                    <h3>ℹ️ Service Information</h3>
+                    <div id="service-info">
+                        <p><strong>Version:</strong> <span id="version">-</span></p>
+                        <p><strong>OpenAI:</strong> <span id="openai-status">-</span></p>
+                        <p><strong>AssemblyAI:</strong> <span id="assemblyai-status">-</span></p>
+                        <p><strong>N8N Webhook:</strong> <span id="n8n-status">-</span></p>
+                        <p><strong>Twilio Phone:</strong> <span id="twilio-phone">-</span></p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Activity Log -->
+            <div class="card">
+                <h3>📋 Activity Log</h3>
+                <div class="log" id="activity-log">
+                    <div>🚀 Dashboard initialized...</div>
+                    <div>📡 Starting system checks...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let startTime = Date.now();
+        
+        // Log function
+        function log(message) {
+            const logElement = document.getElementById('activity-log');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+        
+        // Test API endpoint
+        async function testEndpoint(path, method = 'GET') {
+            log(`🔍 Testing ${method} ${path}...`);
+            try {
+                const response = await fetch(path, { method });
+                const data = await response.json();
+                log(`✅ ${path} responded: ${response.status}`);
+                console.log('Response:', data);
+                
+                if (path === '/health') {
+                    updateServiceInfo(data);
+                }
+            } catch (error) {
+                log(`❌ ${path} failed: ${error.message}`);
+            }
+        }
+        
+        // Test webhook with sample data
+        async function testWebhook(path) {
+            log(`🔍 Testing webhook ${path}...`);
+            const sampleData = {
+                From: '+1234567890',
+                To: '+441733964789',
+                CallSid: 'test-call-sid-' + Date.now(),
+                Direction: 'inbound'
+            };
+            
+            try {
+                const response = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams(sampleData)
+                });
+                const text = await response.text();
+                log(`✅ ${path} webhook test completed: ${response.status}`);
+                console.log('Webhook response:', text);
+            } catch (error) {
+                log(`❌ ${path} webhook test failed: ${error.message}`);
+            }
+        }
+        
+        // WebSocket functions
+        function toggleWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            } else {
+                connectWebSocket();
+            }
+        }
+        
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            log(`🔌 Connecting to WebSocket: ${wsUrl}`);
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                log('✅ WebSocket connected successfully');
+                document.getElementById('ws-connection-status').textContent = 'Connected';
+                document.getElementById('ws-connect-btn').textContent = 'Disconnect';
+                updateWSStatus(true);
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                log(`📨 WebSocket message: ${data.type} - ${data.message || JSON.stringify(data)}`);
+            };
+            
+            ws.onclose = function() {
+                log('🔌 WebSocket disconnected');
+                document.getElementById('ws-connection-status').textContent = 'Disconnected';
+                document.getElementById('ws-connect-btn').textContent = 'Connect';
+                updateWSStatus(false);
+            };
+            
+            ws.onerror = function(error) {
+                log('❌ WebSocket error: ' + error);
+                updateWSStatus(false);
+            };
+        }
+        
+        function sendTestMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = {
+                    type: 'test',
+                    payload: 'Hello from dashboard!',
+                    timestamp: new Date().toISOString()
+                };
+                ws.send(JSON.stringify(message));
+                log('📤 Sent test message to WebSocket');
+            } else {
+                log('❌ WebSocket not connected');
+            }
+        }
+        
+        // Update status indicators
+        function updateStatus(elementId, online) {
+            const dot = document.getElementById(elementId);
+            dot.className = `status-dot ${online ? 'online' : 'offline'}`;
+        }
+        
+        function updateWSStatus(online) {
+            updateStatus('ws-status', online);
+            document.getElementById('ws-status-text').textContent = 
+                online ? 'WebSocket Online' : 'WebSocket Offline';
+        }
+        
+        function updateServiceInfo(healthData) {
+            document.getElementById('environment').textContent = healthData.environment || '-';
+            document.getElementById('version').textContent = '1.0.0';
+            document.getElementById('openai-status').textContent = 
+                healthData.ai_services?.openai ? '✅ Configured' : '❌ Not configured';
+            document.getElementById('assemblyai-status').textContent = 
+                healthData.ai_services?.assemblyai ? '✅ Configured' : '❌ Not configured';
+        }
+        
+        // Update uptime counter
+        function updateUptime() {
+            const uptime = Math.floor((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(uptime / 60);
+            const seconds = uptime % 60;
+            document.getElementById('uptime').textContent = `${minutes}m ${seconds}s`;
+        }
+        
+        // Initialize dashboard
+        async function initDashboard() {
+            log('🚀 Initializing dashboard...');
+            
+            // Set webhook URL
+            document.getElementById('webhook-url').textContent = 
+                `${window.location.origin}/webhook/voice`;
+            
+            // Test API health
+            try {
+                const response = await fetch('/health');
+                if (response.ok) {
+                    const data = await response.json();
+                    updateStatus('api-status', true);
+                    document.getElementById('api-status-text').textContent = 'API Online';
+                    updateServiceInfo(data);
+                    log('✅ API health check passed');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                updateStatus('api-status', false);
+                document.getElementById('api-status-text').textContent = 'API Offline';
+                log('❌ API health check failed: ' + error.message);
+            }
+            
+            // Check environment
+            updateStatus('env-status', true);
+            document.getElementById('env-status-text').textContent = 'Environment OK';
+            
+            // Set up uptime counter
+            setInterval(updateUptime, 1000);
+            
+            log('✅ Dashboard initialization complete');
+        }
+        
+        // Start dashboard when page loads
+        window.addEventListener('load', initDashboard);
+    </script>
+</body>
+</html> 
