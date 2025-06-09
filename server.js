@@ -516,7 +516,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.3&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help","meeting","book","booking","appointment","email","schedule","international","next","week","friday"]&enable_extra_session_information=true', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&encoding=pcm_mulaw&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help","meeting","book","booking","appointment","email","schedule","international","next","week","friday"]', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -710,33 +710,22 @@ function handleTwilioStreamConnection(ws, req) {
                     // Forward audio to AssemblyAI for real-time transcription (only after TwiML finishes)
                     if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
                         try {
-                            // Twilio sends mulaw-encoded audio as base64
-                            // AssemblyAI real-time works with original mulaw format  
+                            // Send the mulaw audio data directly to AssemblyAI
+                            // Twilio sends mulaw-encoded audio as base64, which is what AssemblyAI expects
                             const audioMessage = {
                                 audio_data: data.media.payload
                             };
                             assemblyAISocket.send(JSON.stringify(audioMessage));
                             
                             if (mediaPacketCount === 1) {
-                                const mulawLength = Buffer.from(data.media.payload, 'base64').length;
-                                console.log(`✅ FIRST audio packet sent to AssemblyAI (${mulawLength} bytes mulaw)`);
-                                firstAudioSample = data.media.payload.substring(0, 100);
+                                console.log(`✅ FIRST audio packet sent to AssemblyAI (${data.media.payload.length} bytes)`);
+                                console.log('🎙️ Audio format: mulaw, sample rate: 8000Hz');
                             }
                             
                             // Monitor audio quality every 500 packets  
                             if (mediaPacketCount % 500 === 0) {
                                 console.log(`🎵 Audio packets sent: ${mediaPacketCount}`);
                             }
-                            
-                            // Check for audio variation (indicating speech)
-                            if (mediaPacketCount > 1 && !audioVariationDetected) {
-                                const currentSample = data.media.payload.substring(0, 100);
-                                if (currentSample !== firstAudioSample) {
-                                    audioVariationDetected = true;
-                                    console.log('🎙️ AUDIO VARIATION DETECTED - User is likely speaking!');
-                                }
-                            }
-
                         } catch (audioError) {
                             console.error('❌ Error sending audio to AssemblyAI:', audioError.message);
                             console.error('🔍 AssemblyAI socket state:', assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET');
