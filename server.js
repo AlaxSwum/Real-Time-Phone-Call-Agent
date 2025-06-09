@@ -120,7 +120,7 @@ function convertMulawToPcm(mulawBuffer) {
 }
 
 // Intent detection and processing function
-function detectAndProcessIntent(text, callSid) {
+async function detectAndProcessIntent(text, callSid) {
     const lowerText = text.toLowerCase();
     let detectedIntent = null;
     let confidence = 0;
@@ -187,23 +187,40 @@ function detectAndProcessIntent(text, callSid) {
     // Send to n8n webhook if configured
     if (process.env.N8N_WEBHOOK_URL) {
         console.log(`🔗 Sending intent to n8n: ${detectedIntent}`);
-        fetch(process.env.N8N_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: 'intent_detection',
-                callSid: callSid,
-                intent: detectedIntent,
-                confidence: confidence,
-                transcript: text,
-                timestamp: new Date().toISOString(),
-                keywords_matched: getMatchedKeywords(lowerText, detectedIntent)
-            })
-        }).then(response => {
+        console.log(`🔗 N8N Webhook URL: ${process.env.N8N_WEBHOOK_URL}`);
+        
+        try {
+            const response = await fetch(process.env.N8N_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    type: 'intent_detection',
+                    callSid: callSid,
+                    intent: detectedIntent,
+                    confidence: confidence,
+                    transcript: text,
+                    timestamp: new Date().toISOString(),
+                    keywords_matched: getMatchedKeywords(lowerText, detectedIntent)
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
             console.log(`✅ Intent sent to n8n (${response.status}): ${detectedIntent}`);
-        }).catch(error => {
-            console.error('❌ Error sending intent to n8n:', error);
-        });
+            const responseText = await response.text();
+            console.log(`📡 N8N Response:`, responseText);
+        } catch (error) {
+            console.error('❌ Error sending intent to n8n:', error.message);
+            console.error('🔍 Full error:', error);
+            console.error('🔗 Webhook URL:', process.env.N8N_WEBHOOK_URL);
+        }
+    } else {
+        console.log('⚠️ No N8N webhook URL configured - skipping webhook');
     }
 }
 
