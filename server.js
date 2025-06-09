@@ -319,7 +319,7 @@ app.post('/webhook/voice', (req, res) => {
     <Start>
         <Stream url="${streamUrl}" track="inbound_track" />
     </Start>
-    <Pause length="18"/>
+    <Pause length="8"/>
     <Say voice="alice">Thank you. Goodbye!</Say>
 </Response>`;
     
