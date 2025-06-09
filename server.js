@@ -545,23 +545,24 @@ function handleTwilioStreamConnection(ws, req) {
                             fullTranscript += transcript.text + ' ';
                         }
                         
-                        // Broadcast to dashboard clients (only non-empty transcripts)
+                        // Broadcast to dashboard clients (including empty for debugging)
+                        const confidencePercent = Math.round((transcript.confidence || 0) * 100);
+                        
                         if (transcript.text && transcript.text.trim().length > 0) {
-                            const confidencePercent = Math.round((transcript.confidence || 0) * 100);
                             console.log(`📝 TRANSCRIPT: "${transcript.text}" (${confidencePercent}% confidence, ${transcript.message_type})`);
-                            
-                            broadcastToClients({
-                                type: 'live_transcript',
-                                message: `"${transcript.text}" (${confidencePercent}% confidence)`,
-                                data: {
-                                    callSid: callSid,
-                                    text: transcript.text,
-                                    confidence: transcript.confidence,
-                                    is_final: transcript.message_type === 'FinalTranscript',
-                                    timestamp: new Date().toISOString()
-                                }
-                            });
                         }
+                        
+                        broadcastToClients({
+                            type: 'live_transcript',
+                            message: transcript.text ? `"${transcript.text}" (${confidencePercent}% confidence)` : `Processing audio (${confidencePercent}% confidence)`,
+                            data: {
+                                callSid: callSid,
+                                text: transcript.text || "",
+                                confidence: transcript.confidence,
+                                is_final: transcript.message_type === 'FinalTranscript',
+                                timestamp: new Date().toISOString()
+                            }
+                        });
                         
                         // If final transcript, analyze with OpenAI and detect intents
                         if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 1) {
