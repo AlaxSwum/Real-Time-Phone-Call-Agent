@@ -254,7 +254,10 @@ app.get('/api', (req, res) => {
 
 // Function to broadcast to all dashboard clients
 function broadcastToClients(message) {
-    console.log(`📡 Broadcasting to ${dashboardClients.size} dashboard clients:`, message.type);
+    // Only log non-transcript messages to reduce spam
+    if (message.type !== 'live_transcript') {
+        console.log(`📡 Broadcasting to ${dashboardClients.size} dashboard clients:`, message.type);
+    }
     let sentCount = 0;
     dashboardClients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
@@ -266,7 +269,10 @@ function broadcastToClients(message) {
             }
         }
     });
-    console.log(`✅ Successfully sent message to ${sentCount}/${dashboardClients.size} clients`);
+    // Only log success for important messages
+    if (message.type !== 'live_transcript') {
+        console.log(`✅ Successfully sent message to ${sentCount}/${dashboardClients.size} clients`);
+    }
 }
 
 // Twilio Voice Webhook Endpoint - REAL-TIME STREAMING
@@ -319,8 +325,7 @@ app.post('/webhook/voice', (req, res) => {
     <Start>
         <Stream url="${streamUrl}" track="inbound_track" />
     </Start>
-    <Pause length="8"/>
-    <Say voice="alice">Thank you. Goodbye!</Say>
+    <Pause length="30"/>
 </Response>`;
     
     console.log('📋 TwiML Response:', twiml);
@@ -511,7 +516,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.1&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help"]&enable_extra_session_information=true', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.3&auto_punctuation=true&filter_profanity=false&word_boost=["hello","hi","test","phone","call","yes","no","okay","thank","you","please","help","meeting","book","booking","appointment","email","schedule","international","next","week","friday"]&enable_extra_session_information=true', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -718,8 +723,8 @@ function handleTwilioStreamConnection(ws, req) {
                                 firstAudioSample = data.media.payload.substring(0, 100);
                             }
                             
-                            // Monitor audio quality every 200 packets
-                            if (mediaPacketCount % 200 === 0) {
+                            // Monitor audio quality every 500 packets  
+                            if (mediaPacketCount % 500 === 0) {
                                 console.log(`🎵 Audio packets sent: ${mediaPacketCount}`);
                             }
                             
