@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const WebSocket = require('ws');
 const http = require('http');
+const path = require('path');
 
 // AI Service imports (uncomment when implementing)
 // const OpenAI = require('openai');
@@ -56,6 +57,9 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Serve static files from public directory
+app.use(express.static('public'));
+
 // Basic health check endpoint
 app.get('/health', (req, res) => {
     res.json({ 
@@ -69,8 +73,13 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Root endpoint
+// Root endpoint - serve dashboard
 app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// API info endpoint
+app.get('/api', (req, res) => {
     res.json({
         message: 'Real-Time Call Processor API',
         version: '1.0.0',
@@ -78,6 +87,7 @@ app.get('/', (req, res) => {
         endpoints: {
             health: '/health',
             voice_webhook: '/webhook/voice',
+            dashboard: '/',
             websocket: 'ws://your-render-url',
             documentation: 'https://github.com/AlaxSwum/Real-Time-Phone-Call-Agent'
         }
@@ -285,7 +295,7 @@ app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint not found',
         path: req.originalUrl,
-        available_endpoints: ['/', '/health', '/webhook/voice', '/webhook/recording', '/webhook/recording-status'],
+        available_endpoints: ['/', '/api', '/health', '/webhook/voice', '/webhook/recording', '/webhook/recording-status'],
         websocket_path: '/ws'
     });
 });
