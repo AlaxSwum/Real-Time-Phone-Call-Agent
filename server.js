@@ -107,15 +107,19 @@ app.get('/api', (req, res) => {
 
 // Function to broadcast to all dashboard clients
 function broadcastToClients(message) {
+    console.log(`📡 Broadcasting to ${dashboardClients.size} dashboard clients:`, message.type);
+    let sentCount = 0;
     dashboardClients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             try {
                 client.send(JSON.stringify(message));
+                sentCount++;
             } catch (error) {
                 console.error('❌ Error broadcasting to client:', error);
             }
         }
     });
+    console.log(`✅ Successfully sent message to ${sentCount}/${dashboardClients.size} clients`);
 }
 
 // Twilio Voice Webhook Endpoint - REAL-TIME STREAMING
@@ -148,6 +152,7 @@ app.post('/webhook/voice', (req, res) => {
     // Broadcast call start to all connected dashboard clients
     broadcastToClients({
         type: 'call_started',
+        message: `Call started from ${From}`,
         data: {
             from: From,
             to: To,
@@ -226,6 +231,7 @@ async function analyzeTranscriptWithAI(text, callSid) {
         // Broadcast AI analysis to dashboard
         broadcastToClients({
             type: 'ai_analysis',
+            message: `AI Analysis: ${analysis.intent} (${analysis.urgency} urgency)`,
             data: {
                 callSid: callSid,
                 transcript: text,
@@ -289,7 +295,8 @@ function handleDashboardConnection(ws, req) {
     activeConnections++;
     dashboardClients.add(ws);
     const clientIP = req.socket.remoteAddress;
-    console.log(`🔌 New dashboard WebSocket connection from ${clientIP} (Total: ${activeConnections})`);
+    console.log(`🔌 NEW DASHBOARD CLIENT connected from ${clientIP}`);
+    console.log(`📊 Dashboard clients: ${dashboardClients.size}, Total connections: ${activeConnections}`);
     
     ws.on('message', async (message) => {
         try {
@@ -323,7 +330,8 @@ function handleDashboardConnection(ws, req) {
     ws.on('close', () => {
         activeConnections--;
         dashboardClients.delete(ws);
-        console.log(`🔌 Dashboard WebSocket disconnected (Total: ${activeConnections})`);
+        console.log(`🔌 DASHBOARD CLIENT disconnected`);
+        console.log(`📊 Dashboard clients: ${dashboardClients.size}, Total connections: ${activeConnections}`);
     });
     
     ws.on('error', (error) => {
@@ -390,6 +398,7 @@ function handleTwilioStreamConnection(ws, req) {
                         // Broadcast to dashboard clients
                         broadcastToClients({
                             type: 'live_transcript',
+                            message: `Live transcript: "${transcript.text}"`,
                             data: {
                                 callSid: callSid,
                                 text: transcript.text,
@@ -456,6 +465,7 @@ function handleTwilioStreamConnection(ws, req) {
                     // Broadcast stream start
                     broadcastToClients({
                         type: 'stream_started',
+                        message: `Audio stream started for call ${callSid}`,
                         data: {
                             callSid: callSid,
                             timestamp: new Date().toISOString()
@@ -536,6 +546,7 @@ function handleTwilioStreamConnection(ws, req) {
                     // Broadcast stream end
                     broadcastToClients({
                         type: 'stream_ended',
+                        message: `Call ended for ${callSid}`,
                         data: {
                             callSid: callSid,
                             fullTranscript: fullTranscript.trim(),
