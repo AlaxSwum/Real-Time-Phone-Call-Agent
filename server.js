@@ -6,16 +6,16 @@ const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
 
-// AI Service imports (uncomment when implementing)
-// const OpenAI = require('openai');
-// const { AssemblyAI } = require('assemblyai');
+// AI Service imports
+const OpenAI = require('openai');
+const { AssemblyAI } = require('assemblyai');
 
 const app = express();
 const server = http.createServer(app);
 
-// Initialize AI clients (uncomment when implementing)
-// const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-// const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
+// Initialize AI clients
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
 // Environment configuration
 const PORT = process.env.PORT || 3000;
@@ -69,7 +69,9 @@ app.get('/health', (req, res) => {
         ai_services: {
             openai: !!process.env.OPENAI_API_KEY,
             assemblyai: !!process.env.ASSEMBLYAI_API_KEY
-        }
+        },
+        n8n_webhook: !!process.env.N8N_WEBHOOK_URL,
+        twilio_phone: process.env.TWILIO_PHONE_NUMBER || '+441733964789'
     });
 });
 
@@ -139,33 +141,51 @@ app.post('/webhook/voice', (req, res) => {
 });
 
 // Twilio Recording Webhook
-app.post('/webhook/recording', (req, res) => {
+app.post('/webhook/recording', async (req, res) => {
     console.log('🎙️ Recording completed:', req.body);
     
     const { RecordingUrl, CallSid, RecordingDuration } = req.body;
     
-    // Process recording with AI (placeholder)
     console.log(`🎵 Recording URL: ${RecordingUrl}`);
     console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
     
-    // Send recording data to n8n if configured
+    // Process recording with AI - REAL IMPLEMENTATION
+    console.log('🚀 Starting AI processing...');
+    const aiResult = await processAudioWithAI({ url: RecordingUrl });
+    
+    // Enhanced data payload for n8n
+    const enhancedPayload = {
+        type: 'twilio_recording_with_ai',
+        call_data: req.body,
+        ai_processing: aiResult,
+        timestamp: new Date().toISOString()
+    };
+    
+    // Send recording data with AI analysis to n8n if configured
     if (process.env.N8N_WEBHOOK_URL) {
         fetch(process.env.N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: 'twilio_recording',
-                data: req.body,
-                timestamp: new Date().toISOString()
-            })
+            body: JSON.stringify(enhancedPayload)
+        }).then(response => {
+            console.log('✅ Enhanced data sent to n8n webhook:', response.status);
         }).catch(error => {
-            console.error('❌ Error sending recording to n8n:', error);
+            console.error('❌ Error sending enhanced data to n8n:', error);
         });
+    }
+    
+    // Log AI results for monitoring
+    if (aiResult.processed) {
+        console.log('🎯 Intent detected:', aiResult.analysis?.intent);
+        console.log('⚡ Urgency level:', aiResult.analysis?.urgency);
+        console.log('📋 Summary:', aiResult.analysis?.summary);
+    } else {
+        console.log('❌ AI processing failed:', aiResult.error);
     }
     
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Thank you for your message. It has been processed successfully. Goodbye!</Say>
+    <Say voice="alice">Thank you for your message. It has been processed and analyzed by our AI system. We will respond accordingly. Goodbye!</Say>
 </Response>`;
     
     res.type('text/xml');
@@ -178,32 +198,132 @@ app.post('/webhook/recording-status', (req, res) => {
     res.status(200).send('OK');
 });
 
-// AI Processing Functions (to be implemented)
+// Manual AI Processing Test Endpoint
+app.post('/test/ai-processing', async (req, res) => {
+    const { recording_url } = req.body;
+    
+    if (!recording_url) {
+        return res.status(400).json({ 
+            error: 'Missing recording_url in request body',
+            example: { recording_url: 'https://your-recording-url.mp3' }
+        });
+    }
+    
+    console.log('🧪 Manual AI processing test for:', recording_url);
+    
+    try {
+        const result = await processAudioWithAI({ url: recording_url });
+        res.json({
+            success: true,
+            result: result,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// AI Processing Functions
 async function processAudioWithAI(audioData) {
     try {
-        // TODO: Implement AssemblyAI transcription
-        // const transcript = await assemblyAI.transcripts.create({
-        //     audio_url: audioData.url,
-        //     language_detection: true
-        // });
+        console.log('🤖 Starting AI processing for audio:', audioData.url);
         
-        // TODO: Implement OpenAI response generation
-        // const response = await openai.chat.completions.create({
-        //     model: "gpt-4",
-        //     messages: [{ role: "user", content: transcript.text }]
-        // });
+        // Step 1: Transcribe audio with AssemblyAI
+        console.log('📝 Starting transcription...');
+        const transcript = await assemblyAI.transcripts.create({
+            audio_url: audioData.url,
+            language_detection: true,
+            speaker_labels: true,
+            sentiment_analysis: true,
+            entity_detection: true,
+            iab_categories: true
+        });
         
-        // For now, return placeholder
+        // Wait for transcription to complete
+        let transcriptResult = transcript;
+        while (transcriptResult.status !== 'completed' && transcriptResult.status !== 'error') {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            transcriptResult = await assemblyAI.transcripts.get(transcript.id);
+            console.log('⏳ Transcription status:', transcriptResult.status);
+        }
+        
+        if (transcriptResult.status === 'error') {
+            throw new Error(`Transcription failed: ${transcriptResult.error}`);
+        }
+        
+        const transcriptText = transcriptResult.text;
+        console.log('✅ Transcription completed:', transcriptText);
+        
+        // Step 2: Analyze intent and generate response with OpenAI
+        console.log('🧠 Analyzing intent and generating response...');
+        const aiResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                {
+                    role: "system",
+                    content: `You are an AI assistant for a real-time call processing system. Analyze the following voice message and:
+                    1. Identify the caller's intent (inquiry, complaint, request, booking, etc.)
+                    2. Extract key information (contact details, dates, specific requests)
+                    3. Determine urgency level (low, medium, high)
+                    4. Suggest appropriate follow-up actions
+                    5. Generate a professional summary
+                    
+                    Provide your response in this JSON format:
+                    {
+                        "intent": "primary intent category",
+                        "urgency": "low/medium/high",
+                        "key_info": ["extracted information items"],
+                        "sentiment": "positive/neutral/negative",
+                        "follow_up": "recommended action",
+                        "summary": "brief professional summary"
+                    }`
+                },
+                {
+                    role: "user",
+                    content: `Voice message transcription: "${transcriptText}"`
+                }
+            ],
+            temperature: 0.3
+        });
+        
+        let aiAnalysis;
+        try {
+            aiAnalysis = JSON.parse(aiResponse.choices[0].message.content);
+        } catch (parseError) {
+            // Fallback if JSON parsing fails
+            aiAnalysis = {
+                intent: "general_inquiry",
+                urgency: "medium",
+                key_info: [transcriptText.substring(0, 100)],
+                sentiment: "neutral",
+                follow_up: "Review and respond appropriately",
+                summary: aiResponse.choices[0].message.content
+            };
+        }
+        
+        console.log('✅ AI analysis completed:', aiAnalysis);
+        
         return {
-            transcript: "Placeholder transcript",
-            ai_response: "Placeholder AI response",
-            processed: true
+            transcript: transcriptText,
+            analysis: aiAnalysis,
+            audio_insights: {
+                sentiment: transcriptResult.sentiment_analysis_results,
+                entities: transcriptResult.entities,
+                categories: transcriptResult.iab_categories_result
+            },
+            processed: true,
+            timestamp: new Date().toISOString()
         };
     } catch (error) {
         console.error('❌ AI processing error:', error);
         return {
-            error: 'AI processing failed',
-            processed: false
+            error: `AI processing failed: ${error.message}`,
+            processed: false,
+            timestamp: new Date().toISOString()
         };
     }
 }
@@ -295,7 +415,7 @@ app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint not found',
         path: req.originalUrl,
-        available_endpoints: ['/', '/api', '/health', '/webhook/voice', '/webhook/recording', '/webhook/recording-status'],
+        available_endpoints: ['/', '/api', '/health', '/webhook/voice', '/webhook/recording', '/webhook/recording-status', '/test/ai-processing'],
         websocket_path: '/ws'
     });
 });
