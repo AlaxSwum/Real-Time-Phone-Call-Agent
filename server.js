@@ -126,7 +126,20 @@ function detectAndProcessIntent(text, callSid) {
     let confidence = 0;
     
     // Meeting intent detection
-    const meetingKeywords = ['meeting', 'discuss', 'conversation', 'talk', 'chat', 'catch up'];
+    const meetingKeywords = [
+        'arrange a meeting',
+        'set up a meeting',
+        'schedule a meeting',
+        'meeting on',
+        'meeting at',
+        'meeting next',
+        'would like to meet',
+        'want to meet',
+        'let\'s meet',
+        'discuss',
+        'catch up',
+        'get together'
+    ];
     const meetingMatch = meetingKeywords.some(keyword => lowerText.includes(keyword));
     
     // Support intent detection
@@ -137,10 +150,13 @@ function detectAndProcessIntent(text, callSid) {
     const infoKeywords = ['information', 'info', 'details', 'tell me', 'what is', 'how much', 'price'];
     const infoMatch = infoKeywords.some(keyword => lowerText.includes(keyword));
     
-    // Determine primary intent
+    // Determine primary intent with higher confidence for meetings
     if (meetingMatch) {
         detectedIntent = 'meeting_discussion';
-        confidence = 0.85;
+        // Higher confidence for explicit meeting mentions
+        confidence = lowerText.includes('arrange a meeting') || 
+                    lowerText.includes('schedule a meeting') ? 
+                    0.95 : 0.85;
     } else if (supportMatch) {
         detectedIntent = 'support_request';
         confidence = 0.75;
@@ -194,7 +210,20 @@ function detectAndProcessIntent(text, callSid) {
 // Helper function to get matched keywords for intent
 function getMatchedKeywords(lowerText, intent) {
     const keywordSets = {
-        'meeting_discussion': ['meeting', 'discuss', 'conversation', 'talk', 'chat', 'catch up'],
+        'meeting_discussion': [
+            'arrange a meeting',
+            'set up a meeting',
+            'schedule a meeting',
+            'meeting on',
+            'meeting at',
+            'meeting next',
+            'would like to meet',
+            'want to meet',
+            'let\'s meet',
+            'discuss',
+            'catch up',
+            'get together'
+        ],
         'support_request': ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'],
         'information_request': ['information', 'info', 'details', 'tell me', 'what is', 'how much', 'price'],
         'general_inquiry': []
@@ -206,18 +235,29 @@ function getMatchedKeywords(lowerText, intent) {
 
 // Basic health check endpoint
 app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'healthy', 
-        environment: NODE_ENV,
+    const healthCheck = {
+        status: 'healthy',
         timestamp: new Date().toISOString(),
-        ai_services: {
-            openai: !!process.env.OPENAI_API_KEY,
-            assemblyai: !!process.env.ASSEMBLYAI_API_KEY
+        environment: NODE_ENV,
+        services: {
+            assemblyai: {
+                configured: !!process.env.ASSEMBLYAI_API_KEY,
+                status: 'operational'
+            },
+            openai: {
+                configured: !!process.env.OPENAI_API_KEY,
+                status: 'operational'
+            }
         },
-        n8n_webhook: !!process.env.N8N_WEBHOOK_URL,
-        twilio_phone: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
-        active_calls: activeStreams.size
-    });
+        server: {
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            activeConnections: activeConnections,
+            activeStreams: activeStreams.size
+        }
+    };
+    
+    res.json(healthCheck);
 });
 
 // Root endpoint - serve dashboard
@@ -415,14 +455,7 @@ async function analyzeTranscriptWithAI(text, callSid) {
 }
 
 // Single WebSocket server with path routing
-const wss = new WebSocket.Server({ 
-    server,
-    verifyClient: (info) => {
-        console.log(`🔍 WebSocket connection attempt to: ${info.req.url}`);
-        console.log(`🔍 Headers:`, info.req.headers);
-        return true; // Allow all connections
-    }
-});
+const wss = new WebSocket.Server({ server });
 
 let activeConnections = 0;
 
@@ -973,15 +1006,9 @@ function gracefulShutdown(signal) {
 }
 
 // Start server
-server.listen(PORT, () => {
-    console.log(`🚀 Real-Time Call Processor running on port ${PORT}`);
-    console.log(`🌍 Environment: ${NODE_ENV}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`🔌 Dashboard WebSocket: ws://localhost:${PORT}/ws`);
-    console.log(`🎙️ Stream WebSocket: ws://localhost:${PORT}/stream`);
-    if (NODE_ENV === 'production') {
-        console.log('🛡️ Production security features enabled');
-    }
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT} in ${NODE_ENV} mode`);
+    console.log(`📡 WebSocket server ready for connections`);
 });
 
 // Handle uncaught exceptions
