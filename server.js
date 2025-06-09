@@ -168,11 +168,13 @@ app.post('/webhook/voice', (req, res) => {
     
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! Please speak your message clearly.</Say>
+    <Say voice="alice">Hello! Please wait for the beep, then speak clearly.</Say>
     <Start>
         <Stream url="${streamUrl}" track="inbound_track" />
     </Start>
-    <Pause length="20"/>
+    <Pause length="2"/>
+    <Play>https://demo.twilio.com/docs/classic.mp3</Play>
+    <Pause length="15"/>
     <Say voice="alice">Thank you. Goodbye!</Say>
 </Response>`;
     
@@ -364,7 +366,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&word_boost=["hello","phone","call","message","help","support","question","problem","yes","no","please","thank","you","good","bad","issue","error","bug","feature","request"]&auto_punctuation=true&filter_profanity=false', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.5&auto_punctuation=true&filter_profanity=false', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -445,6 +447,15 @@ function handleTwilioStreamConnection(ws, req) {
     }
     
     let mediaPacketCount = 0;
+    let isUserSpeaking = false;
+    let silenceBuffer = 0;
+    let twimlFinished = false;
+    
+    // Delay audio forwarding to avoid TwiML voice pickup
+    setTimeout(() => {
+        twimlFinished = true;
+        console.log('🎙️ TwiML playback should be finished, starting audio capture...');
+    }, 6000); // Wait 6 seconds for TwiML to finish (Hello + beep + pause)
     
     ws.on('message', (message) => {
         try {
@@ -487,8 +498,8 @@ function handleTwilioStreamConnection(ws, req) {
                         console.log(`📡 Received ${mediaPacketCount} audio packets from Twilio`);
                     }
                     
-                    // Forward audio to AssemblyAI for real-time transcription
-                    if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload) {
+                    // Forward audio to AssemblyAI for real-time transcription (only after TwiML finishes)
+                    if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
                         try {
                             // Convert base64 audio data to the format AssemblyAI expects
                             // Send every audio packet for better accuracy
@@ -498,7 +509,7 @@ function handleTwilioStreamConnection(ws, req) {
                             assemblyAISocket.send(JSON.stringify(audioMessage));
                             
                             if (mediaPacketCount === 1) {
-                                console.log(`✅ FIRST audio packet sent to AssemblyAI successfully`);
+                                console.log(`✅ FIRST audio packet sent to AssemblyAI successfully (after TwiML delay)`);
                             }
                             if (mediaPacketCount % 200 === 0) {
                                 console.log(`🎵 Sent ${mediaPacketCount} audio packets to AssemblyAI`);
@@ -506,6 +517,10 @@ function handleTwilioStreamConnection(ws, req) {
                         } catch (audioError) {
                             console.error('❌ Error sending audio to AssemblyAI:', audioError);
                             console.error('🔍 Audio error details:', audioError.message);
+                        }
+                    } else if (!twimlFinished) {
+                        if (mediaPacketCount === 1) {
+                            console.log('⏳ Skipping audio packets - waiting for TwiML to finish (avoiding echo)');
                         }
                     } else if (!assemblyAISocket) {
                         if (mediaPacketCount === 1) {
