@@ -156,6 +156,8 @@ app.post('/webhook/voice', (req, res) => {
     
     // TwiML response for real-time streaming
     const streamUrl = `wss://real-time-phone-call-agent.onrender.com/stream/${CallSid}`;
+    console.log('🔗 Stream URL for TwiML:', streamUrl);
+    
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Hello! Welcome to the Real-Time Call Processor. Your call is being transcribed live by our AI system.</Say>
@@ -167,6 +169,7 @@ app.post('/webhook/voice', (req, res) => {
     <Say voice="alice">Thank you for your message. It has been processed by our AI system. Goodbye!</Say>
 </Response>`;
     
+    console.log('📋 TwiML Response:', twiml);
     res.type('text/xml');
     res.send(twiml);
 });
@@ -323,27 +326,43 @@ dashboardWss.on('connection', (ws, req) => {
 streamWss.on('connection', (ws, req) => {
     const urlParts = req.url.split('/');
     const callSid = urlParts[urlParts.length - 1];
-    console.log(`🎙️ New Twilio stream connection for call: ${callSid}`);
+    console.log(`🎙️ NEW TWILIO STREAM CONNECTION for call: ${callSid}`);
+    console.log(`🔗 Stream URL: ${req.url}`);
+    console.log(`📡 Headers:`, req.headers);
     
     // Initialize AssemblyAI real-time transcription
     let assemblyAISocket = null;
     let fullTranscript = '';
     
     if (process.env.ASSEMBLYAI_API_KEY) {
-        // Create real-time transcription session
-        assemblyAI.realtime.createSession({
-            sample_rate: 8000, // Twilio uses 8kHz
-            encoding: 'pcm_mulaw'
-        }).then(session => {
-            assemblyAISocket = session;
+        console.log('🤖 Creating AssemblyAI real-time session...');
+        try {
+            // Create WebSocket connection to AssemblyAI real-time service
+            const WS = require('ws');
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
+                headers: {
+                    'Authorization': process.env.ASSEMBLYAI_API_KEY
+                }
+            });
             
-            session.on('transcript', (transcript) => {
+            assemblyAISocket = assemblyAIWS;
+            
+            assemblyAIWS.on('open', () => {
+                console.log('✅ ASSEMBLYAI REAL-TIME WEBSOCKET CONNECTED for call:', callSid);
+            });
+            
+            assemblyAIWS.on('message', (data) => {
+                const transcript = JSON.parse(data);
+                console.log('📥 Raw transcript event:', transcript);
+                
                 if (transcript.text) {
-                    console.log(`🗣️ LIVE TRANSCRIPT: "${transcript.text}"`);
+                    console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
+                    console.log(`📊 Confidence: ${Math.round((transcript.confidence || 0) * 100)}%`);
                     
                     // Add to full transcript
                     if (transcript.message_type === 'FinalTranscript') {
                         fullTranscript += transcript.text + ' ';
+                        console.log(`📝 FULL TRANSCRIPT SO FAR: "${fullTranscript.trim()}"`);
                     }
                     
                     // Broadcast to dashboard clients
@@ -360,20 +379,29 @@ streamWss.on('connection', (ws, req) => {
                     
                     // If final transcript, analyze with OpenAI
                     if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 10) {
+                        console.log('🧠 Sending to OpenAI for analysis...');
                         analyzeTranscriptWithAI(transcript.text, callSid);
                     }
                 }
             });
             
-            session.on('error', (error) => {
-                console.error('❌ AssemblyAI real-time error:', error);
+            assemblyAIWS.on('error', (error) => {
+                console.error('❌ ASSEMBLYAI REAL-TIME ERROR:', error);
             });
             
-            console.log('✅ AssemblyAI real-time session started for call:', callSid);
-        }).catch(error => {
-            console.error('❌ Failed to create AssemblyAI session:', error);
-        });
+            assemblyAIWS.on('close', () => {
+                console.log('🔌 AssemblyAI WebSocket closed for call:', callSid);
+            });
+            
+        } catch (error) {
+            console.error('❌ FAILED TO CREATE ASSEMBLYAI SESSION:', error);
+            console.error('🔍 Error details:', error.message);
+        }
+    } else {
+        console.log('⚠️ NO ASSEMBLYAI API KEY - Real-time transcription disabled');
     }
+    
+    let mediaPacketCount = 0;
     
     ws.on('message', (message) => {
         try {
@@ -381,7 +409,8 @@ streamWss.on('connection', (ws, req) => {
             
             switch (data.event) {
                 case 'start':
-                    console.log('🎙️ Stream started:', data.start);
+                    console.log('🎙️ STREAM STARTED for call:', callSid);
+                    console.log('📋 Stream details:', JSON.stringify(data.start, null, 2));
                     activeStreams.set(callSid, {
                         callSid: callSid,
                         startTime: new Date(),
@@ -400,21 +429,43 @@ streamWss.on('connection', (ws, req) => {
                     break;
                     
                 case 'media':
+                    mediaPacketCount++;
+                    if (mediaPacketCount % 100 === 0) {
+                        console.log(`📡 Received ${mediaPacketCount} audio packets from Twilio`);
+                    }
+                    
                     // Forward audio to AssemblyAI for real-time transcription
-                    if (assemblyAISocket && data.media.payload) {
+                    if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload) {
                         try {
-                            // Convert base64 to buffer and send to AssemblyAI
-                            const audioBuffer = Buffer.from(data.media.payload, 'base64');
-                            assemblyAISocket.sendAudio(audioBuffer);
+                            // Convert base64 audio data to the format AssemblyAI expects
+                            const audioMessage = {
+                                audio_data: data.media.payload
+                            };
+                            assemblyAISocket.send(JSON.stringify(audioMessage));
+                            
+                            if (mediaPacketCount % 200 === 0) {
+                                console.log(`🎵 Sent ${mediaPacketCount} audio packets to AssemblyAI`);
+                            }
                         } catch (audioError) {
                             console.error('❌ Error sending audio to AssemblyAI:', audioError);
+                        }
+                    } else if (!assemblyAISocket) {
+                        if (mediaPacketCount === 1) {
+                            console.log('⚠️ No AssemblyAI socket available to send audio to');
+                        }
+                    } else if (assemblyAISocket.readyState !== 1) {
+                        if (mediaPacketCount === 1) {
+                            console.log(`⚠️ AssemblyAI socket not ready (state: ${assemblyAISocket.readyState})`);
                         }
                     }
                     break;
                     
                 case 'stop':
-                    console.log('🎙️ Stream stopped for call:', callSid);
+                    console.log('🎙️ STREAM STOPPED for call:', callSid);
+                    console.log(`📊 Total audio packets received: ${mediaPacketCount}`);
+                    
                     if (assemblyAISocket) {
+                        console.log('🔌 Closing AssemblyAI session...');
                         assemblyAISocket.close();
                     }
                     
@@ -422,6 +473,8 @@ streamWss.on('connection', (ws, req) => {
                     if (fullTranscript.trim().length > 10) {
                         console.log('🗣️ FULL CALL TRANSCRIPT: "' + fullTranscript.trim() + '"');
                         analyzeTranscriptWithAI(fullTranscript.trim(), callSid);
+                    } else {
+                        console.log('⚠️ No transcript captured during call');
                     }
                     
                     activeStreams.delete(callSid);
@@ -436,6 +489,9 @@ streamWss.on('connection', (ws, req) => {
                         }
                     });
                     break;
+                    
+                default:
+                    console.log(`📥 Unknown stream event: ${data.event}`);
             }
         } catch (error) {
             console.error('❌ Stream message error:', error);
