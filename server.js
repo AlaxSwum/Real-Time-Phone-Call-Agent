@@ -119,6 +119,99 @@ function convertMulawToPcm(mulawBuffer) {
     return pcmBuffer;
 }
 
+// Intent detection and processing function
+function detectAndProcessIntent(text, callSid) {
+    const lowerText = text.toLowerCase();
+    let detectedIntent = null;
+    let confidence = 0;
+    
+    // Email intent detection
+    const emailKeywords = ['email', 'e-mail', 'send email', 'email me', 'my email', 'email address'];
+    const emailMatch = emailKeywords.some(keyword => lowerText.includes(keyword));
+    
+    // Booking intent detection  
+    const bookingKeywords = ['book', 'booking', 'appointment', 'schedule', 'meeting', 'reserve', 'reservation'];
+    const bookingMatch = bookingKeywords.some(keyword => lowerText.includes(keyword));
+    
+    // Support intent detection
+    const supportKeywords = ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'];
+    const supportMatch = supportKeywords.some(keyword => lowerText.includes(keyword));
+    
+    // Information intent detection
+    const infoKeywords = ['information', 'info', 'details', 'tell me', 'what is', 'how much', 'price'];
+    const infoMatch = infoKeywords.some(keyword => lowerText.includes(keyword));
+    
+    // Determine primary intent
+    if (emailMatch) {
+        detectedIntent = 'email_request';
+        confidence = 0.8;
+    } else if (bookingMatch) {
+        detectedIntent = 'booking_request';
+        confidence = 0.85;
+    } else if (supportMatch) {
+        detectedIntent = 'support_request';
+        confidence = 0.75;
+    } else if (infoMatch) {
+        detectedIntent = 'information_request';
+        confidence = 0.7;
+    } else {
+        detectedIntent = 'general_inquiry';
+        confidence = 0.5;
+    }
+    
+    console.log(`🎯 INTENT DETECTED: ${detectedIntent} (${Math.round(confidence * 100)}% confidence)`);
+    console.log(`📋 Intent analysis: "${text}"`);
+    
+    // Broadcast intent to dashboard
+    broadcastToClients({
+        type: 'intent_detected',
+        message: `Intent: ${detectedIntent} (${Math.round(confidence * 100)}% confidence)`,
+        data: {
+            callSid: callSid,
+            intent: detectedIntent,
+            confidence: confidence,
+            transcript: text,
+            timestamp: new Date().toISOString()
+        }
+    });
+    
+    // Send to n8n webhook if configured
+    if (process.env.N8N_WEBHOOK_URL) {
+        console.log(`🔗 Sending intent to n8n: ${detectedIntent}`);
+        fetch(process.env.N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'intent_detection',
+                callSid: callSid,
+                intent: detectedIntent,
+                confidence: confidence,
+                transcript: text,
+                timestamp: new Date().toISOString(),
+                keywords_matched: getMatchedKeywords(lowerText, detectedIntent)
+            })
+        }).then(response => {
+            console.log(`✅ Intent sent to n8n (${response.status}): ${detectedIntent}`);
+        }).catch(error => {
+            console.error('❌ Error sending intent to n8n:', error);
+        });
+    }
+}
+
+// Helper function to get matched keywords for intent
+function getMatchedKeywords(lowerText, intent) {
+    const keywordSets = {
+        'email_request': ['email', 'e-mail', 'send email', 'email me', 'my email', 'email address'],
+        'booking_request': ['book', 'booking', 'appointment', 'schedule', 'meeting', 'reserve', 'reservation'],
+        'support_request': ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'],
+        'information_request': ['information', 'info', 'details', 'tell me', 'what is', 'how much', 'price'],
+        'general_inquiry': []
+    };
+    
+    const keywords = keywordSets[intent] || [];
+    return keywords.filter(keyword => lowerText.includes(keyword));
+}
+
 // Basic health check endpoint
 app.get('/health', (req, res) => {
     res.json({ 
@@ -436,54 +529,45 @@ function handleTwilioStreamConnection(ws, req) {
                 lastTranscriptTime = Date.now(); // Update timestamp for timeout monitoring
                 try {
                     const transcript = JSON.parse(data);
-                    console.log('📥 RAW ASSEMBLYAI MESSAGE:', JSON.stringify(transcript, null, 2));
                     
                     if (transcript.message_type === 'SessionBegins') {
-                        console.log('🎬 AssemblyAI session started:', transcript);
-                        console.log('🔧 Session info - ID:', transcript.session_id, 'Expires:', transcript.expires_at);
+                        console.log('🎬 AssemblyAI session started for call:', callSid);
                     } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
-                        console.log(`🎯 TRANSCRIPT TYPE: ${transcript.message_type}`);
-                        console.log(`🎯 TEXT: "${transcript.text || 'EMPTY'}"`);
-                        console.log(`🎯 CONFIDENCE: ${transcript.confidence || 0}`);
-                        console.log(`🎯 WORDS: ${transcript.words ? transcript.words.length : 0}`);
-                        
                         // Clear timeout when we get actual transcripts
                         if (transcriptTimeout && transcript.text && transcript.text.length > 0) {
                             clearInterval(transcriptTimeout);
                             transcriptTimeout = null;
-                            console.log('✅ SUCCESS! Receiving real transcripts after mulaw→PCM conversion!');
+                            console.log('✅ Real-time transcription working successfully!');
                         }
                     } else if (transcript.text !== undefined) {
-                        const confidence = Math.round((transcript.confidence || 0) * 100);
-                        const confidenceIcon = confidence > 70 ? '🔥' : confidence > 40 ? '⚡' : confidence > 20 ? '🔸' : '⚠️';
-                        console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
-                        console.log(`📊 Confidence: ${confidenceIcon} ${confidence}% ${confidence < 20 ? '(LOW CONFIDENCE - PHONE AUDIO)' : ''}`);
-                        
                         // Add to full transcript (accept even lower confidence for phone audio quality)
                         if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 0) {
                             fullTranscript += transcript.text + ' ';
-                            console.log(`📝 FULL TRANSCRIPT SO FAR: "${fullTranscript.trim()}"`);
-                        } else if (transcript.message_type === 'PartialTranscript' && transcript.text.trim().length > 0) {
-                            console.log(`📝 PARTIAL: "${transcript.text}"`);
                         }
                         
-                        // Broadcast to dashboard clients (including partial transcripts)
-                        broadcastToClients({
-                            type: 'live_transcript',
-                            message: transcript.text ? `Live transcript: "${transcript.text}"` : `Processing audio (confidence: ${Math.round((transcript.confidence || 0) * 100)}%)`,
-                            data: {
-                                callSid: callSid,
-                                text: transcript.text || "",
-                                confidence: transcript.confidence,
-                                is_final: transcript.message_type === 'FinalTranscript',
-                                timestamp: new Date().toISOString()
-                            }
-                        });
+                        // Broadcast to dashboard clients (only non-empty transcripts)
+                        if (transcript.text && transcript.text.trim().length > 0) {
+                            const confidencePercent = Math.round((transcript.confidence || 0) * 100);
+                            console.log(`📝 TRANSCRIPT: "${transcript.text}" (${confidencePercent}% confidence, ${transcript.message_type})`);
+                            
+                            broadcastToClients({
+                                type: 'live_transcript',
+                                message: `"${transcript.text}" (${confidencePercent}% confidence)`,
+                                data: {
+                                    callSid: callSid,
+                                    text: transcript.text,
+                                    confidence: transcript.confidence,
+                                    is_final: transcript.message_type === 'FinalTranscript',
+                                    timestamp: new Date().toISOString()
+                                }
+                            });
+                        }
                         
-                        // If final transcript, analyze with OpenAI (accept very low confidence for phone audio)
+                        // If final transcript, analyze with OpenAI and detect intents
                         if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 1) {
-                            console.log('🧠 Sending to OpenAI for analysis...');
+                            console.log('🧠 Analyzing transcript for intents...');
                             analyzeTranscriptWithAI(transcript.text, callSid);
+                            detectAndProcessIntent(transcript.text, callSid);
                         }
                     } else if (transcript.text === "" && transcript.confidence === 0) {
                         console.log('🔇 Empty transcript received - audio may be too quiet or unclear');
@@ -608,9 +692,7 @@ function handleTwilioStreamConnection(ws, req) {
                         console.log(`🔍 Audio sequence: ${data.media.sequence}`);
                         console.log(`🔍 AssemblyAI socket state: ${assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET'}`);
                     }
-                    if (mediaPacketCount % 100 === 0) {
-                        console.log(`📡 Received ${mediaPacketCount} audio packets from Twilio`);
-                    }
+                    
                     
                     // Forward audio to AssemblyAI for real-time transcription (only after TwiML finishes)
                     if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
@@ -642,23 +724,16 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             if (mediaPacketCount === 1) {
                                 const mulawLength = Buffer.from(data.media.payload, 'base64').length;
-                                console.log(`✅ FIRST audio packet sent to AssemblyAI successfully (after TwiML delay)`);
-                                console.log(`🔊 Original mulaw payload length: ${data.media.payload.length} bytes (base64)`);
-                                console.log(`🔊 Mulaw decoded length: ${mulawLength} bytes`);
-                                console.log(`🔊 Audio conversion: ${conversionSuccess ? 'SUCCESS' : 'FAILED - using original'}`);
+                                console.log(`✅ FIRST audio packet sent to AssemblyAI (mulaw→PCM conversion: ${conversionSuccess ? 'SUCCESS' : 'FAILED'})`);
                                 if (conversionSuccess && pcmBuffer) {
-                                    console.log(`🔊 PCM converted length: ${pcmBuffer.length} bytes`);
-                                    console.log(`🔊 Conversion ratio: ${(pcmBuffer.length / mulawLength).toFixed(1)}x (mulaw→PCM)`);
+                                    console.log(`🔊 Audio conversion: mulaw(${mulawLength}b) → PCM(${pcmBuffer.length}b) = ${(pcmBuffer.length / mulawLength).toFixed(1)}x`);
                                 }
-                                console.log(`🔊 Media timestamp: ${data.media ? data.media.timestamp : 'unknown'}`);
                                 firstAudioSample = data.media.payload.substring(0, 100);
                             }
                             
-                            // Debug every 50th packet for audio quality monitoring
-                            if (mediaPacketCount % 50 === 0) {
-                                const currentSample = data.media.payload.substring(0, 50);
-                                const isVariation = currentSample !== firstAudioSample;
-                                console.log(`🎵 Packet ${mediaPacketCount}: Audio variation: ${isVariation ? 'YES' : 'NO'}`);
+                            // Monitor audio quality every 200 packets
+                            if (mediaPacketCount % 200 === 0) {
+                                console.log(`🎵 Audio packets sent: ${mediaPacketCount}`);
                             }
                             
                             // Check for audio variation (indicating speech)
@@ -669,9 +744,7 @@ function handleTwilioStreamConnection(ws, req) {
                                     console.log('🎙️ AUDIO VARIATION DETECTED - User is likely speaking!');
                                 }
                             }
-                            if (mediaPacketCount % 200 === 0) {
-                                console.log(`🎵 Sent ${mediaPacketCount} audio packets to AssemblyAI`);
-                            }
+
                         } catch (audioError) {
                             console.error('❌ Error sending audio to AssemblyAI:', audioError);
                             console.error('🔍 Audio error details:', audioError.message);
@@ -714,19 +787,16 @@ function handleTwilioStreamConnection(ws, req) {
                     
                     // Final analysis if we have a full transcript
                     if (fullTranscript.trim().length > 0) {
-                        console.log('🗣️ FULL CALL TRANSCRIPT: "' + fullTranscript.trim() + '"');
+                        console.log('📝 FULL CALL TRANSCRIPT: "' + fullTranscript.trim() + '"');
                         if (fullTranscript.trim().length > 3) {
                             analyzeTranscriptWithAI(fullTranscript.trim(), callSid);
-                        } else {
-                            console.log('📝 Transcript too short for AI analysis (under 3 chars)');
+                            detectAndProcessIntent(fullTranscript.trim(), callSid);
                         }
                     } else {
                         console.log('⚠️ No transcript captured during call');
-                        console.log(`🔊 Audio variation detected: ${audioVariationDetected ? 'YES' : 'NO'}`);
                         if (!audioVariationDetected) {
-                            console.log('🔇 ISSUE: No audio variation detected - you may not be speaking loud enough or phone line is silent');
+                            console.log('💡 TIP: Speak louder and clearer for better transcription');
                         }
-                        console.log('💡 TIP: For better transcription - speak MUCH LOUDER, clearer, closer to phone, reduce background noise');
                     }
                     
                     activeStreams.delete(callSid);
