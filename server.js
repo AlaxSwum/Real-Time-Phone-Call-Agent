@@ -527,8 +527,10 @@ function handleTwilioStreamConnection(ws, req) {
             
             assemblyAIWS.on('message', (data) => {
                 lastTranscriptTime = Date.now(); // Update timestamp for timeout monitoring
+                messageCount++;
                 try {
                     const transcript = JSON.parse(data);
+                    console.log('📥 AssemblyAI message:', transcript.message_type, transcript.text ? `"${transcript.text}"` : '(empty)');
                     
                     if (transcript.message_type === 'SessionBegins') {
                         console.log('🎬 AssemblyAI session started for call:', callSid);
@@ -619,13 +621,14 @@ function handleTwilioStreamConnection(ws, req) {
             
             // Add a timeout to detect if AssemblyAI is not responding
             let lastTranscriptTime = Date.now();
+            let messageCount = 0;
             let transcriptTimeout = setInterval(() => {
                 const timeSinceLastTranscript = Date.now() - lastTranscriptTime;
-                if (timeSinceLastTranscript > 10000 && mediaPacketCount > 100) { // 10 seconds without transcript
-                    console.log('⚠️ No transcript received from AssemblyAI for 10+ seconds despite sending audio');
-                    console.log(`🔍 Packets sent: ${mediaPacketCount}, Socket state: ${assemblyAIWS.readyState}`);
+                if (timeSinceLastTranscript > 8000 && mediaPacketCount > 100) { // 8 seconds without any message
+                    console.log(`⚠️ No AssemblyAI messages for 8+ seconds (packets sent: ${mediaPacketCount}, messages received: ${messageCount})`);
+                    console.log(`🔍 Socket state: ${assemblyAIWS.readyState}, Time since last: ${Math.round(timeSinceLastTranscript/1000)}s`);
                 }
-            }, 5000);
+            }, 4000);
             
             // Clear transcript timeout on close
             assemblyAIWS.on('close', () => {
@@ -705,7 +708,19 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             try {
                                 const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+                                
+                                // Validate mulaw buffer
+                                if (mulawBuffer.length === 0) {
+                                    throw new Error('Empty mulaw buffer');
+                                }
+                                
                                 pcmBuffer = convertMulawToPcm(mulawBuffer);
+                                
+                                // Validate PCM conversion
+                                if (!pcmBuffer || pcmBuffer.length === 0) {
+                                    throw new Error('PCM conversion failed - empty buffer');
+                                }
+                                
                                 const pcmBase64 = pcmBuffer.toString('base64');
                                 
                                 const audioMessage = {
@@ -713,8 +728,13 @@ function handleTwilioStreamConnection(ws, req) {
                                 };
                                 assemblyAISocket.send(JSON.stringify(audioMessage));
                                 conversionSuccess = true;
+                                
+                                if (mediaPacketCount === 1) {
+                                    console.log(`🔍 First conversion check: mulaw[0]=${mulawBuffer[0]}, pcm[0:1]=${pcmBuffer.readInt16LE(0)}`);
+                                }
+                                
                             } catch (conversionError) {
-                                console.error('❌ Error converting mulaw to PCM:', conversionError);
+                                console.error('❌ Error converting mulaw to PCM:', conversionError.message);
                                 // Fallback: send original data
                                 const audioMessage = {
                                     audio_data: data.media.payload
@@ -728,6 +748,8 @@ function handleTwilioStreamConnection(ws, req) {
                                 console.log(`✅ FIRST audio packet sent to AssemblyAI (mulaw→PCM conversion: ${conversionSuccess ? 'SUCCESS' : 'FAILED'})`);
                                 if (conversionSuccess && pcmBuffer) {
                                     console.log(`🔊 Audio conversion: mulaw(${mulawLength}b) → PCM(${pcmBuffer.length}b) = ${(pcmBuffer.length / mulawLength).toFixed(1)}x`);
+                                } else {
+                                    console.log(`⚠️ Using original mulaw data (${mulawLength}b) - conversion failed or skipped`);
                                 }
                                 firstAudioSample = data.media.payload.substring(0, 100);
                             }
