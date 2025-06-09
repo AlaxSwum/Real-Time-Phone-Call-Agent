@@ -925,8 +925,8 @@
             statusElement.innerHTML = `
                 <div class="call-info">
                     <h4>📞 Live Call Active</h4>
-                    <p><strong>From:</strong> ${callData.from}</p>
-                    <p><strong>To:</strong> ${callData.to}</p>
+                    <p><strong>From:</strong> ${callData.from || 'Unknown'}</p>
+                    <p><strong>To:</strong> ${callData.to || 'Unknown'}</p>
                     <p><strong>Call ID:</strong> ${callData.callSid}</p>
                     <p><strong>Started:</strong> ${new Date(callData.timestamp).toLocaleTimeString()}</p>
                 </div>
@@ -941,10 +941,40 @@
         
         // Handle live transcript
         function handleLiveTranscript(transcriptData) {
+            console.log('🎙️ Frontend received transcript:', transcriptData);
+            
             const transcriptElement = document.getElementById('live-transcript');
             const timestamp = new Date(transcriptData.timestamp).toLocaleTimeString();
             
-            // Create transcript line
+            // Debug: Show empty transcripts too
+            if (!transcriptData.text || transcriptData.text.trim() === '') {
+                log(`🔇 Empty transcript received (confidence: ${Math.round((transcriptData.confidence || 0) * 100)}%)`);
+                
+                // Still show something on the UI to indicate we're getting audio
+                const debugLine = document.createElement('div');
+                debugLine.className = 'transcript-line debug';
+                debugLine.innerHTML = `
+                    <div class="transcript-meta">
+                        ${timestamp} • Processing Audio • Confidence: ${Math.round((transcriptData.confidence || 0) * 100)}%
+                    </div>
+                    <div class="transcript-text-live" style="font-style: italic; color: #666;">
+                        [Processing audio... ${transcriptData.confidence === 0 ? 'Speak louder and clearer!' : 'Listening...'}]
+                    </div>
+                `;
+                
+                // Replace previous debug line or add new one
+                const lastDebug = transcriptElement.querySelector('.transcript-line.debug:last-child');
+                if (lastDebug) {
+                    lastDebug.replaceWith(debugLine);
+                } else {
+                    transcriptElement.appendChild(debugLine);
+                }
+                
+                transcriptElement.scrollTop = transcriptElement.scrollHeight;
+                return;
+            }
+            
+            // Create transcript line for actual text
             const transcriptLine = document.createElement('div');
             transcriptLine.className = `transcript-line ${transcriptData.is_final ? 'final' : 'partial'}`;
             transcriptLine.innerHTML = `
@@ -953,6 +983,10 @@
                 </div>
                 <div class="transcript-text-live">${transcriptData.text}</div>
             `;
+            
+            // Remove any debug lines when we get real text
+            const debugLines = transcriptElement.querySelectorAll('.transcript-line.debug');
+            debugLines.forEach(line => line.remove());
             
             // If it's a partial transcript, replace the last partial line
             if (!transcriptData.is_final) {

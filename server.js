@@ -385,7 +385,7 @@ function handleTwilioStreamConnection(ws, req) {
                     
                     if (transcript.message_type === 'SessionBegins') {
                         console.log('🎬 AssemblyAI session started:', transcript);
-                    } else if (transcript.text && transcript.text.trim().length > 0) {
+                    } else if (transcript.text !== undefined) {
                         const confidence = Math.round((transcript.confidence || 0) * 100);
                         const confidenceIcon = confidence > 70 ? '🔥' : confidence > 40 ? '⚡' : confidence > 20 ? '🔸' : '⚠️';
                         console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
@@ -397,13 +397,13 @@ function handleTwilioStreamConnection(ws, req) {
                             console.log(`📝 FULL TRANSCRIPT SO FAR: "${fullTranscript.trim()}"`);
                         }
                         
-                        // Broadcast to dashboard clients
+                        // Broadcast to dashboard clients (including empty transcripts for debugging)
                         broadcastToClients({
                             type: 'live_transcript',
-                            message: `Live transcript: "${transcript.text}"`,
+                            message: transcript.text ? `Live transcript: "${transcript.text}"` : `Processing audio (confidence: ${Math.round((transcript.confidence || 0) * 100)}%)`,
                             data: {
                                 callSid: callSid,
-                                text: transcript.text,
+                                text: transcript.text || "",
                                 confidence: transcript.confidence,
                                 is_final: transcript.message_type === 'FinalTranscript',
                                 timestamp: new Date().toISOString()
