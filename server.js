@@ -168,11 +168,11 @@ app.post('/webhook/voice', (req, res) => {
     
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! Please speak your message.</Say>
+    <Say voice="alice">Hello! Please speak your message clearly.</Say>
     <Start>
-        <Stream url="${streamUrl}" />
+        <Stream url="${streamUrl}" track="inbound_track" />
     </Start>
-    <Pause length="15"/>
+    <Pause length="20"/>
     <Say voice="alice">Thank you. Goodbye!</Say>
 </Response>`;
     
@@ -364,7 +364,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&word_boost=["hello","phone","call","message","help","support","question","problem","yes","no","please","thank","you","good","bad","issue","error","bug","feature","request"]&auto_punctuation=true&filter_profanity=false', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 }
@@ -386,8 +386,10 @@ function handleTwilioStreamConnection(ws, req) {
                     if (transcript.message_type === 'SessionBegins') {
                         console.log('🎬 AssemblyAI session started:', transcript);
                     } else if (transcript.text) {
+                        const confidence = Math.round((transcript.confidence || 0) * 100);
+                        const confidenceIcon = confidence > 70 ? '🔥' : confidence > 40 ? '⚡' : '⚠️';
                         console.log(`🗣️ LIVE TRANSCRIPT [${transcript.message_type}]: "${transcript.text}"`);
-                        console.log(`📊 Confidence: ${Math.round((transcript.confidence || 0) * 100)}%`);
+                        console.log(`📊 Confidence: ${confidenceIcon} ${confidence}% ${confidence < 50 ? '(LOW CONFIDENCE)' : ''}`);
                         
                         // Add to full transcript
                         if (transcript.message_type === 'FinalTranscript') {
@@ -408,8 +410,8 @@ function handleTwilioStreamConnection(ws, req) {
                             }
                         });
                         
-                        // If final transcript, analyze with OpenAI
-                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 10) {
+                        // If final transcript, analyze with OpenAI (lower confidence threshold)
+                        if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 3) {
                             console.log('🧠 Sending to OpenAI for analysis...');
                             analyzeTranscriptWithAI(transcript.text, callSid);
                         }
@@ -489,6 +491,7 @@ function handleTwilioStreamConnection(ws, req) {
                     if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload) {
                         try {
                             // Convert base64 audio data to the format AssemblyAI expects
+                            // Send every audio packet for better accuracy
                             const audioMessage = {
                                 audio_data: data.media.payload
                             };
@@ -539,6 +542,7 @@ function handleTwilioStreamConnection(ws, req) {
                         }
                     } else {
                         console.log('⚠️ No transcript captured during call');
+                        console.log('💡 TIP: For better transcription - speak louder, clearer, closer to phone, reduce background noise');
                     }
                     
                     activeStreams.delete(callSid);
