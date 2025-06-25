@@ -1734,6 +1734,148 @@ function getMatchedKeywords(lowerText, intent) {
     return keywords.filter(keyword => lowerText.includes(keyword));
 }
 
+// ====== ALL ROUTE DEFINITIONS MUST BE BEFORE ERROR HANDLERS ======
+
+// Helper endpoint to get Twilio webhook URL
+app.get('/twilio-config', (req, res) => {
+    try {
+        const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+        const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.hostname;
+        const webhookUrl = `${protocol}://${host}/voice`;
+        
+        console.log(`📋 Twilio config requested by ${req.ip}`);
+        console.log(`🔗 Generated webhook URL: ${webhookUrl}`);
+        
+        res.json({
+            status: 'success',
+            webhook_url: webhookUrl,
+            current_host: host,
+            protocol: protocol,
+            instructions: [
+                "1. Go to your Twilio Console (https://console.twilio.com/)",
+                "2. Navigate to Phone Numbers > Manage > Active numbers",
+                "3. Click on your phone number",
+                `4. Set the webhook URL to: ${webhookUrl}`,
+                "5. Set HTTP method to POST",
+                "6. Save the configuration"
+            ],
+            bridge_mode: {
+                enabled: !!process.env.BRIDGE_TARGET_NUMBER,
+                target_number: process.env.BRIDGE_TARGET_NUMBER || "Not configured"
+            },
+            environment: {
+                node_env: NODE_ENV,
+                twilio_configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
+                openai_configured: !!process.env.OPENAI_API_KEY,
+                assemblyai_configured: !!process.env.ASSEMBLYAI_API_KEY,
+                n8n_configured: !!process.env.N8N_WEBHOOK_URL
+            },
+            websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('❌ Error in /twilio-config:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Simple debug endpoint
+app.get('/debug', (req, res) => {
+    res.json({
+        status: 'Server is running',
+        timestamp: new Date().toISOString(),
+        environment: NODE_ENV,
+        bridge_configured: !!process.env.BRIDGE_TARGET_NUMBER,
+        bridge_target: process.env.BRIDGE_TARGET_NUMBER || 'Not set',
+        endpoints_available: [
+            '/',
+            '/api',
+            '/health', 
+            '/twilio-config',
+            '/debug',
+            '/voice',
+            '/webhook/voice',
+            '/webhook/recording'
+        ],
+        deployment_version: 'FIXED-ROUTING', // Route ordering fix
+        headers: req.headers,
+        url: req.url,
+        method: req.method,
+        ip: req.ip
+    });
+});
+
+// Voice webhook endpoints (both supported for compatibility)
+app.post('/voice', (req, res) => {
+    console.log('✅ /voice endpoint called - CORRECT endpoint!');
+    handleVoiceWebhook(req, res);
+});
+
+app.post('/webhook/voice', (req, res) => {
+    console.log('⚠️ /webhook/voice endpoint called - legacy endpoint, but still working');
+    handleVoiceWebhook(req, res);
+});
+
+// Webhook for recording completion (bridge mode)
+app.post('/webhook/recording', async (req, res) => {
+    console.log('🎵 Bridge call recording completed:', req.body);
+    
+    const { RecordingUrl, CallSid, RecordingDuration, RecordingSid } = req.body;
+    
+    console.log(`🎵 Recording URL: ${RecordingUrl}`);
+    console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
+    console.log(`🆔 Recording SID: ${RecordingSid}`);
+    
+    // Process the bridge call recording with AI
+    if (RecordingUrl && RecordingDuration > 2) {
+        console.log('🚀 Starting AI analysis of bridge call recording...');
+        
+        try {
+            // Download and analyze the recording
+            const analysisResult = await analyzeBridgeRecording({
+                url: RecordingUrl,
+                callSid: CallSid,
+                duration: RecordingDuration
+            });
+            
+            console.log('✅ Bridge call analysis completed:', analysisResult);
+            
+            // Send bridge call analysis to n8n
+            if (process.env.N8N_WEBHOOK_URL) {
+                const bridgeWebhookData = {
+                    type: 'bridge_call_analysis',
+                    callSid: CallSid,
+                    recordingUrl: RecordingUrl,
+                    duration: RecordingDuration,
+                    analysis: analysisResult,
+                    timestamp: new Date().toISOString()
+                };
+                
+                fetch(process.env.N8N_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(bridgeWebhookData)
+                }).then(response => {
+                    console.log('✅ Bridge call analysis sent to n8n:', response.status);
+                }).catch(error => {
+                    console.error('❌ Error sending bridge analysis to n8n:', error);
+                });
+            }
+            
+        } catch (error) {
+            console.error('❌ Bridge call analysis failed:', error);
+        }
+    }
+    
+    res.status(200).send('OK');
+});
+
+// ====== ERROR HANDLERS AND 404 MUST BE LAST ======
+
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('ERROR Unhandled error:', err);
@@ -1743,9 +1885,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Debug: Specific webhook endpoints are defined above
-
-// 404 handler
+// 404 handler (MUST BE LAST)
 app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint not found',
@@ -1820,80 +1960,7 @@ process.on('unhandledRejection', (reason, promise) => {
     gracefulShutdown('UNHANDLED_REJECTION');
 });
 
-// Helper endpoint to get Twilio webhook URL
-app.get('/twilio-config', (req, res) => {
-    try {
-        const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
-        const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.hostname;
-        const webhookUrl = `${protocol}://${host}/voice`;
-        
-        console.log(`📋 Twilio config requested by ${req.ip}`);
-        console.log(`🔗 Generated webhook URL: ${webhookUrl}`);
-        
-        res.json({
-            status: 'success',
-            webhook_url: webhookUrl,
-            current_host: host,
-            protocol: protocol,
-            instructions: [
-                "1. Go to your Twilio Console (https://console.twilio.com/)",
-                "2. Navigate to Phone Numbers > Manage > Active numbers",
-                "3. Click on your phone number",
-                `4. Set the webhook URL to: ${webhookUrl}`,
-                "5. Set HTTP method to POST",
-                "6. Save the configuration"
-            ],
-            bridge_mode: {
-                enabled: !!process.env.BRIDGE_TARGET_NUMBER,
-                target_number: process.env.BRIDGE_TARGET_NUMBER || "Not configured"
-            },
-            environment: {
-                node_env: NODE_ENV,
-                twilio_configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
-                openai_configured: !!process.env.OPENAI_API_KEY,
-                assemblyai_configured: !!process.env.ASSEMBLYAI_API_KEY,
-                n8n_configured: !!process.env.N8N_WEBHOOK_URL
-            },
-            websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`,
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        console.error('❌ Error in /twilio-config:', error);
-        res.status(500).json({
-            error: 'Internal server error',
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-// Simple debug endpoint
-app.get('/debug', (req, res) => {
-    res.json({
-        status: 'Server is running',
-        timestamp: new Date().toISOString(),
-        environment: NODE_ENV,
-        bridge_configured: !!process.env.BRIDGE_TARGET_NUMBER,
-        bridge_target: process.env.BRIDGE_TARGET_NUMBER || 'Not set',
-        endpoints_available: [
-            '/',
-            '/api',
-            '/health', 
-            '/twilio-config',
-            '/debug',
-            '/voice',
-            '/webhook/voice',
-            '/webhook/recording'
-        ],
-        deployment_version: '7082b11', // Latest commit hash
-        headers: req.headers,
-        url: req.url,
-        method: req.method,
-        ip: req.ip
-    });
-});
-
-// Voice webhook handler function
+// Voice webhook handler function (moved above route definitions)
 function handleVoiceWebhook(req, res) {
     console.log('🔥 WEBHOOK CALLED:', req.url);
     console.log('🔥 WEBHOOK METHOD:', req.method);
@@ -1982,72 +2049,7 @@ function handleVoiceWebhook(req, res) {
     }
 }
 
-// Voice webhook endpoints (both supported for compatibility)
-app.post('/voice', (req, res) => {
-    console.log('✅ /voice endpoint called - CORRECT endpoint!');
-    handleVoiceWebhook(req, res);
-});
-
-app.post('/webhook/voice', (req, res) => {
-    console.log('⚠️ /webhook/voice endpoint called - legacy endpoint, but still working');
-    handleVoiceWebhook(req, res);
-});
-
-// Webhook for recording completion (bridge mode)
-app.post('/webhook/recording', async (req, res) => {
-    console.log('🎵 Bridge call recording completed:', req.body);
-    
-    const { RecordingUrl, CallSid, RecordingDuration, RecordingSid } = req.body;
-    
-    console.log(`🎵 Recording URL: ${RecordingUrl}`);
-    console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
-    console.log(`🆔 Recording SID: ${RecordingSid}`);
-    
-    // Process the bridge call recording with AI
-    if (RecordingUrl && RecordingDuration > 2) {
-        console.log('🚀 Starting AI analysis of bridge call recording...');
-        
-        try {
-            // Download and analyze the recording
-            const analysisResult = await analyzeBridgeRecording({
-                url: RecordingUrl,
-                callSid: CallSid,
-                duration: RecordingDuration
-            });
-            
-            console.log('✅ Bridge call analysis completed:', analysisResult);
-            
-            // Send bridge call analysis to n8n
-            if (process.env.N8N_WEBHOOK_URL) {
-                const bridgeWebhookData = {
-                    type: 'bridge_call_analysis',
-                    callSid: CallSid,
-                    recordingUrl: RecordingUrl,
-                    duration: RecordingDuration,
-                    analysis: analysisResult,
-                    timestamp: new Date().toISOString()
-                };
-                
-                fetch(process.env.N8N_WEBHOOK_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(bridgeWebhookData)
-                }).then(response => {
-                    console.log('✅ Bridge call analysis sent to n8n:', response.status);
-                }).catch(error => {
-                    console.error('❌ Error sending bridge analysis to n8n:', error);
-                });
-            }
-            
-        } catch (error) {
-            console.error('❌ Bridge call analysis failed:', error);
-        }
-    }
-    
-    res.status(200).send('OK');
-});
-
-// Analyze bridge call recording
+// Analyze bridge call recording (moved above route definitions)
 async function analyzeBridgeRecording({ url, callSid, duration }) {
     try {
         console.log('🎵 Downloading bridge call recording...');
