@@ -933,7 +933,11 @@ function handleDashboardConnection(ws, req) {
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
-            console.log('MESSAGE Received dashboard message:', data.type);
+            
+            // Only log non-ping messages to reduce spam
+            if (data.type && data.type !== 'ping') {
+                console.log('MESSAGE Received dashboard message:', data.type);
+            }
             
             switch (data.type) {
                 case 'ping':
@@ -952,10 +956,15 @@ function handleDashboardConnection(ws, req) {
                     break;
                     
                 default:
-                    console.log('Unknown dashboard message type:', data.type);
+                    if (data.type) {
+                        console.log('Unknown dashboard message type:', data.type);
+                    } else {
+                        console.log('Received malformed message:', message.toString().substring(0, 100));
+                    }
             }
         } catch (error) {
             console.error('ERROR Dashboard WebSocket message error:', error);
+            console.error('ERROR Raw message:', message.toString().substring(0, 100));
         }
     });
     
@@ -2055,14 +2064,30 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         console.log('🎵 Downloading bridge call recording...');
         
         // Download the recording from Twilio
+        if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+            throw new Error('Twilio credentials not configured for recording download');
+        }
+        
+        console.log('🔐 Using Twilio credentials for recording download...');
         const response = await fetch(url, {
             headers: {
-                'Authorization': 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+                'Authorization': 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64'),
+                'User-Agent': 'Real-Time-Call-Processor/1.0'
             }
         });
         
+        console.log(`📡 Recording download response: ${response.status} ${response.statusText}`);
+        
         if (!response.ok) {
-            throw new Error(`Failed to download recording: ${response.status}`);
+            if (response.status === 401) {
+                throw new Error(`Authentication failed - check Twilio credentials (${response.status})`);
+            } else if (response.status === 403) {
+                throw new Error(`Access forbidden - check Twilio permissions (${response.status})`);
+            } else if (response.status === 404) {
+                throw new Error(`Recording not found - it may not be ready yet (${response.status})`);
+            } else {
+                throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
+            }
         }
         
         const audioBuffer = await response.buffer();

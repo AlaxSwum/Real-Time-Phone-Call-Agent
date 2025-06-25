@@ -608,18 +608,26 @@
         
         // Message Handlers
         function handleWebSocketMessage(data) {
-            log(`${data.type}: ${data.message || ''}`);
-            
-            switch (data.type) {
-                case 'call_started':
-                    handleCallStarted(data.data);
-                    break;
-                case 'live_transcript':
-                    handleLiveTranscript(data.data);
-                    break;
-                case 'stream_ended':
-                    handleCallEnded(data.data);
-                    break;
+            // Only log if data and type exist
+            if (data && data.type) {
+                log(`${data.type}: ${data.message || ''}`);
+                
+                switch (data.type) {
+                    case 'call_started':
+                        handleCallStarted(data.data);
+                        break;
+                    case 'live_transcript':
+                        handleLiveTranscript(data.data);
+                        break;
+                    case 'stream_ended':
+                        handleCallEnded(data.data);
+                        break;
+                    case 'pong':
+                        // Ignore pong messages
+                        break;
+                    default:
+                        log(`Unknown message type: ${data.type}`);
+                }
             }
         }
         
