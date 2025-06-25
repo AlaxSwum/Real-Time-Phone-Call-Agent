@@ -1735,8 +1735,17 @@ app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint not found',
         path: req.originalUrl,
-        available_endpoints: ['/', '/api', '/health', '/webhook/voice'],
-        websocket_paths: ['/ws', '/stream']
+        available_endpoints: [
+            '/',
+            '/api', 
+            '/health',
+            '/twilio-config',
+            '/debug',
+            '/voice',
+            '/webhook/voice',
+            '/webhook/recording'
+        ],
+        websocket_paths: ['/ws', '/stream', '/?callSid=CALLSID']
     });
 });
 
@@ -1798,25 +1807,61 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Helper endpoint to get Twilio webhook URL
 app.get('/twilio-config', (req, res) => {
-    const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
-    const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.hostname;
-    const webhookUrl = `${protocol}://${host}/voice`;
-    
+    try {
+        const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+        const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.hostname;
+        const webhookUrl = `${protocol}://${host}/voice`;
+        
+        console.log(`📋 Twilio config requested by ${req.ip}`);
+        console.log(`🔗 Generated webhook URL: ${webhookUrl}`);
+        
+        res.json({
+            status: 'success',
+            webhook_url: webhookUrl,
+            current_host: host,
+            protocol: protocol,
+            instructions: [
+                "1. Go to your Twilio Console (https://console.twilio.com/)",
+                "2. Navigate to Phone Numbers > Manage > Active numbers",
+                "3. Click on your phone number",
+                `4. Set the webhook URL to: ${webhookUrl}`,
+                "5. Set HTTP method to POST",
+                "6. Save the configuration"
+            ],
+            bridge_mode: {
+                enabled: !!process.env.BRIDGE_TARGET_NUMBER,
+                target_number: process.env.BRIDGE_TARGET_NUMBER || "Not configured"
+            },
+            environment: {
+                node_env: NODE_ENV,
+                twilio_configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
+                openai_configured: !!process.env.OPENAI_API_KEY,
+                assemblyai_configured: !!process.env.ASSEMBLYAI_API_KEY,
+                n8n_configured: !!process.env.N8N_WEBHOOK_URL
+            },
+            websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('❌ Error in /twilio-config:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Simple debug endpoint
+app.get('/debug', (req, res) => {
     res.json({
-        webhook_url: webhookUrl,
-        instructions: [
-            "1. Go to your Twilio Console (https://console.twilio.com/)",
-            "2. Navigate to Phone Numbers > Manage > Active numbers",
-            "3. Click on your phone number",
-            `4. Set the webhook URL to: ${webhookUrl}`,
-            "5. Set HTTP method to POST",
-            "6. Save the configuration"
-        ],
-        bridge_mode: {
-            enabled: !!process.env.BRIDGE_TARGET_NUMBER,
-            target_number: process.env.BRIDGE_TARGET_NUMBER || "Not configured"
-        },
-        websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`
+        status: 'Server is running',
+        timestamp: new Date().toISOString(),
+        environment: NODE_ENV,
+        headers: req.headers,
+        url: req.url,
+        method: req.method,
+        ip: req.ip
     });
 });
 
