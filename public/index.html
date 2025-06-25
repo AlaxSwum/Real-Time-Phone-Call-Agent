@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Call Processor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #ffffff;
+            color: #1a1a1a;
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e5e5e5;
+        }
+        
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 1rem;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+        }
+        
+        .card {
+            background: #fafafa;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .card h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #1a1a1a;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .status-value {
+            font-weight: 500;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        
+        .status-online { background: #e8f5e8; color: #2d7d2d; }
+        .status-offline { background: #ffe8e8; color: #d73434; }
+        .status-loading { background: #fff3cd; color: #856404; }
+        
+        .btn {
+            background: #007aff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: #0056b3;
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .endpoint-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .endpoint-item:last-child {
+            border-bottom: none;
+        }
+        
+        .method-tag {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-right: 8px;
+        }
+        
+        .method-get { background: #e3f2fd; color: #1976d2; }
+        .method-post { background: #e8f5e8; color: #2d7d2d; }
+        
+        .live-section {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .live-section {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+        }
+        
+        .call-status {
+            text-align: center;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px dashed #ddd;
+            color: #666;
+        }
+        
+        .call-status.active {
+            border-color: #28a745;
+            background: #f8fff8;
+            color: #28a745;
+        }
+        
+        .transcript-area {
+            background: #f8f9fa;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .transcript-item {
+            margin-bottom: 8px;
+            padding: 12px 16px;
+            background: white;
+            border-radius: 8px;
+            border-left: 2px solid #e5e5e5;
+            line-height: 1.5;
+        }
+        
+        .transcript-item.partial {
+            border-left-color: #ff9500;
+            background: #fffbf0;
+            opacity: 0.8;
+        }
+        
+        .transcript-item.final {
+            border-left-color: #007aff;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .transcript-text {
+            color: #1a1a1a;
+            font-size: 1rem;
+            font-weight: 400;
+        }
+        
+        .log-area {
+            background: #1a1a1a;
+            color: #00ff41;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+            height: 300px;
+            overflow-y: auto;
+            line-height: 1.4;
+        }
+        
+        .log-area::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .log-area::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 3px;
+        }
+        
+        .connection-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .info-item {
+            text-align: center;
+            padding: 10px;
+            background: white;
+            border: 1px solid #e5e5e5;
+            border-radius: 6px;
+        }
+        
+        .info-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .info-value {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+        
+        .webhook-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 15px;
+        }
+        
+        .webhook-info h4 {
+            margin-bottom: 8px;
+            color: #856404;
+        }
+        
+        .webhook-url {
+            background: white;
+            border: 1px solid #ddd;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            word-break: break-all;
+        }
+        
+        .minimal-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            background: white;
+            width: 90%;
+            max-width: 500px;
+            margin: 10% auto;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            display: none;
+        }
+        
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            display: block;
+        }
+        
+        .alert.error {
+            background: #f8d7da;
+            color: #721c24;
+            display: block;
+        }
+        
+        .alert.loading {
+            background: #fff3cd;
+            color: #856404;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Real-Time Call Processor</h1>
+            <p class="subtitle">AI-Powered Voice Call Processing Dashboard</p>
+        </header>
+
+        <div class="main-grid">
+            <!-- System Status -->
+            <div class="card">
+                <h2>System Status</h2>
+                <div class="status-item">
+                    <span class="status-label">API Server</span>
+                    <span class="status-value status-loading" id="api-status">Checking</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">WebSocket</span>
+                    <span class="status-value status-loading" id="ws-status">Connecting</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">AssemblyAI</span>
+                    <span class="status-value status-loading" id="assemblyai-status">Not configured</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">OpenAI</span>
+                    <span class="status-value status-loading" id="openai-status">Not configured</span>
+                </div>
+                
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Environment</div>
+                        <div class="info-value" id="environment">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Uptime</div>
+                        <div class="info-value" id="uptime">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection -->
+            <div class="card">
+                <h2>Connection</h2>
+                <div class="connection-controls">
+                    <button class="btn" id="connect-btn" onclick="toggleConnection()">Connect</button>
+                    <button class="btn btn-secondary" onclick="testConnection()">Test</button>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Status</span>
+                    <span class="status-value status-offline" id="connection-status">Disconnected</span>
+                </div>
+                
+                <div class="webhook-info">
+                    <h4>Twilio Webhook URL</h4>
+                    <div class="webhook-url" id="webhook-url">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Processing -->
+        <div class="card live-section">
+            <div>
+                <h2>Live Call Monitor</h2>
+                <div class="call-status" id="call-status">
+                    <p>No active calls</p>
+                    <p>Call +441733964789 to start</p>
+                </div>
+                
+                <h2 style="margin-top: 20px;">Quick Actions</h2>
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                    <button class="btn" onclick="testAPI()">Test API Health</button>
+                    <button class="btn" onclick="testAssemblyAI()">Test AssemblyAI</button>
+                    <button class="btn" onclick="showTestModal()">Test AI Processing</button>
+                </div>
+            </div>
+            
+            <div>
+                <h2>Live Transcription</h2>
+                <div class="transcript-area" id="transcript-area">
+                    <p style="text-align: center; color: #666; margin-top: 50px;">
+                        Waiting for calls...
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="card">
+            <h2>Activity Log</h2>
+            <div class="log-area" id="activity-log">
+                <div>System initialized</div>
+                <div>Starting health checks...</div>
+            </div>
+        </div>
+
+        <!-- Test Modal -->
+        <div class="minimal-modal" id="test-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">Test AI Processing</h3>
+                    <button class="close-btn" onclick="closeTestModal()">&times;</button>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Audio Recording URL</label>
+                    <input type="text" class="form-input" id="recording-url" 
+                           placeholder="https://example.com/audio.mp3">
+                </div>
+                <button class="btn" onclick="runAITest()">Process Audio</button>
+                <div class="alert" id="test-alert"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let startTime = Date.now();
+        
+        // Utility functions
+        function log(message) {
+            const logEl = document.getElementById('activity-log');
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML += `<div>[${time}] ${message}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        function updateStatus(elementId, status) {
+            const el = document.getElementById(elementId);
+            el.className = `status-value status-${status}`;
+            el.textContent = status === 'online' ? 'Connected' : 
+                           status === 'offline' ? 'Disconnected' : 'Loading';
+        }
+        
+        // API Functions
+        async function testAPI() {
+            log('Testing API health...');
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                log('API health check passed');
+                updateSystemInfo(data);
+                updateStatus('api-status', 'online');
+            } catch (error) {
+                log(`API test failed: ${error.message}`);
+                updateStatus('api-status', 'offline');
+            }
+        }
+        
+        async function testAssemblyAI() {
+            log('Testing AssemblyAI connection...');
+            try {
+                const response = await fetch('/test/assemblyai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                if (data.success) {
+                    log('AssemblyAI test successful');
+                    updateStatus('assemblyai-status', 'online');
+                } else {
+                    log(`AssemblyAI test failed: ${data.error}`);
+                    updateStatus('assemblyai-status', 'offline');
+                }
+            } catch (error) {
+                log(`AssemblyAI test error: ${error.message}`);
+                updateStatus('assemblyai-status', 'offline');
+            }
+        }
+        
+        // WebSocket Functions
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            } else {
+                connectWebSocket();
+            }
+        }
+        
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${location.host}/ws`;
+            
+            log(`Connecting to WebSocket...`);
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                log('WebSocket connected');
+                updateStatus('ws-status', 'online');
+                document.getElementById('connection-status').textContent = 'Connected';
+                document.getElementById('connect-btn').textContent = 'Disconnect';
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            ws.onclose = () => {
+                log('WebSocket disconnected');
+                updateStatus('ws-status', 'offline');
+                document.getElementById('connection-status').textContent = 'Disconnected';
+                document.getElementById('connect-btn').textContent = 'Connect';
+            };
+            
+            ws.onerror = (error) => {
+                log('WebSocket error occurred');
+                updateStatus('ws-status', 'offline');
+            };
+        }
+        
+        function testConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'ping',
+                    timestamp: new Date().toISOString()
+                }));
+                log('Test message sent');
+            } else {
+                log('No active connection to test');
+            }
+        }
+        
+        // Message Handlers
+        function handleWebSocketMessage(data) {
+            log(`${data.type}: ${data.message || ''}`);
+            
+            switch (data.type) {
+                case 'call_started':
+                    handleCallStarted(data.data);
+                    break;
+                case 'live_transcript':
+                    handleLiveTranscript(data.data);
+                    break;
+                case 'stream_ended':
+                    handleCallEnded(data.data);
+                    break;
+            }
+        }
+        
+        function handleCallStarted(callData) {
+            const statusEl = document.getElementById('call-status');
+            statusEl.className = 'call-status active';
+            statusEl.innerHTML = `
+                <p><strong>Live Call Active</strong></p>
+                <p>From: ${callData.from || 'Unknown'}</p>
+                <p>Call ID: ${callData.callSid}</p>
+            `;
+            
+            const transcriptEl = document.getElementById('transcript-area');
+            transcriptEl.innerHTML = '<p style="text-align: center; color: #666;">Listening for speech...</p>';
+            
+            log(`Call started from ${callData.from}`);
+        }
+        
+        function handleLiveTranscript(transcriptData) {
+            if (!transcriptData.text || transcriptData.text.trim() === '' || transcriptData.confidence < 0.15) {
+                return;
+            }
+            
+            const transcriptEl = document.getElementById('transcript-area');
+            const timestamp = new Date(transcriptData.timestamp).toLocaleTimeString();
+            
+            const transcriptItem = document.createElement('div');
+            transcriptItem.className = `transcript-item ${transcriptData.is_final ? 'final' : 'partial'}`;
+            transcriptItem.innerHTML = `
+                <div class="transcript-text">${transcriptData.text}</div>
+            `;
+            
+            if (!transcriptData.is_final) {
+                const lastPartial = transcriptEl.querySelector('.transcript-item.partial:last-child');
+                if (lastPartial) {
+                    lastPartial.replaceWith(transcriptItem);
+                } else {
+                    transcriptEl.appendChild(transcriptItem);
+                }
+            } else {
+                transcriptEl.appendChild(transcriptItem);
+            }
+            
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
+            
+            // Only log final transcripts to keep activity log clean
+            if (transcriptData.is_final) {
+                log(`Conversation: "${transcriptData.text}"`);
+            }
+        }
+        
+        function handleCallEnded(callData) {
+            const statusEl = document.getElementById('call-status');
+            statusEl.className = 'call-status';
+            statusEl.innerHTML = `
+                <p>Call ended</p>
+                <p>Call +441733964789 to start new session</p>
+            `;
+            log(`Call ended for ${callData.callSid}`);
+        }
+        
+        // Modal Functions
+        function showTestModal() {
+            document.getElementById('test-modal').style.display = 'block';
+            document.getElementById('recording-url').value = '';
+            document.getElementById('test-alert').className = 'alert';
+        }
+        
+        function closeTestModal() {
+            document.getElementById('test-modal').style.display = 'none';
+        }
+        
+        async function runAITest() {
+            const url = document.getElementById('recording-url').value.trim();
+            const alertEl = document.getElementById('test-alert');
+            
+            if (!url) {
+                alertEl.className = 'alert error';
+                alertEl.textContent = 'Please enter a recording URL';
+                return;
+            }
+            
+            alertEl.className = 'alert loading';
+            alertEl.textContent = 'Processing audio... This may take 30-60 seconds.';
+            
+            try {
+                const response = await fetch('/test/ai-processing', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recording_url: url })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alertEl.className = 'alert success';
+                    alertEl.textContent = 'AI processing completed successfully!';
+                    log('AI processing test completed');
+                    setTimeout(closeTestModal, 2000);
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+            } catch (error) {
+                alertEl.className = 'alert error';
+                alertEl.textContent = `Error: ${error.message}`;
+                log(`AI test failed: ${error.message}`);
+            }
+        }
+        
+        // System Info
+        function updateSystemInfo(data) {
+            document.getElementById('environment').textContent = data.environment || '-';
+            
+            if (data.services?.openai?.configured) {
+                updateStatus('openai-status', 'online');
+            }
+            if (data.services?.assemblyai?.configured) {
+                updateStatus('assemblyai-status', 'online');
+            }
+        }
+        
+        function updateUptime() {
+            const uptime = Math.floor((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(uptime / 60);
+            const seconds = uptime % 60;
+            document.getElementById('uptime').textContent = `${minutes}m ${seconds}s`;
+        }
+        
+        // Initialize
+        window.addEventListener('load', () => {
+            log('Dashboard initialized');
+            document.getElementById('webhook-url').textContent = `${location.origin}/webhook/voice`;
+            
+            // Auto-connect WebSocket
+            setTimeout(() => {
+                connectWebSocket();
+                testAPI();
+            }, 1000);
+            
+            // Update uptime every second
+            setInterval(updateUptime, 1000);
+        });
+        
+        // Close modal when clicking outside
+        window.onclick = (event) => {
+            const modal = document.getElementById('test-modal');
+            if (event.target === modal) {
+                closeTestModal();
+            }
+        };
+    </script>
+</body>
+</html> 
