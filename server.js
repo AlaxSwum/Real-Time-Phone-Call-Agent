@@ -1834,8 +1834,32 @@ process.on('unhandledRejection', (reason, promise) => {
     gracefulShutdown('UNHANDLED_REJECTION');
 });
 
-// Voice webhook for incoming calls
-app.post('/voice', (req, res) => {
+// Helper endpoint to get Twilio webhook URL
+app.get('/twilio-config', (req, res) => {
+    const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.hostname;
+    const webhookUrl = `${protocol}://${host}/voice`;
+    
+    res.json({
+        webhook_url: webhookUrl,
+        instructions: [
+            "1. Go to your Twilio Console (https://console.twilio.com/)",
+            "2. Navigate to Phone Numbers > Manage > Active numbers",
+            "3. Click on your phone number",
+            `4. Set the webhook URL to: ${webhookUrl}`,
+            "5. Set HTTP method to POST",
+            "6. Save the configuration"
+        ],
+        bridge_mode: {
+            enabled: !!process.env.BRIDGE_TARGET_NUMBER,
+            target_number: process.env.BRIDGE_TARGET_NUMBER || "Not configured"
+        },
+        websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`
+    });
+});
+
+// Voice webhook handler function
+function handleVoiceWebhook(req, res) {
     const { CallSid, From, To, CallStatus } = req.body;
     console.log('📞 Incoming call received from Twilio');
     console.log('📋 Call details:', { Called: To, CallerCountry: req.body.CallerCountry, Direction: req.body.Direction, CallerState: req.body.CallerState, ToZip: req.body.ToZip, CallSid, To, CallerZip: req.body.CallerZip, ToCountry: req.body.ToCountry, CallToken: req.body.CallToken, CalledZip: req.body.CalledZip, ApiVersion: req.body.ApiVersion, CalledCity: req.body.CalledCity, CallStatus, From, AccountSid: req.body.AccountSid, CalledCountry: req.body.CalledCountry, CallerCity: req.body.CallerCity, ToCity: req.body.ToCity, FromCountry: req.body.FromCountry, Caller: req.body.Caller, FromCity: req.body.FromCity, CalledState: req.body.CalledState, FromZip: req.body.FromZip, FromState: req.body.FromState });
@@ -1856,6 +1880,15 @@ app.post('/voice', (req, res) => {
         }
     });
     
+    // Get the current host dynamically (works for localhost, ngrok, or deployed URLs)
+    const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.hostname;
+    const wsProtocol = protocol === 'https' ? 'wss' : 'ws';
+    const baseWsUrl = `${wsProtocol}://${host}`;
+    
+    console.log(`🔗 Detected host: ${host}`);
+    console.log(`🔗 Using WebSocket base URL: ${baseWsUrl}`);
+    
     // Check if this is a bridge call (Person A calling to be connected to Person B)
     const bridgeNumber = process.env.BRIDGE_TARGET_NUMBER; // Set this in your environment variables
     
@@ -1863,7 +1896,7 @@ app.post('/voice', (req, res) => {
         console.log(`🌉 Bridge mode: Connecting ${From} to ${bridgeNumber}`);
         
         // TwiML for bridge mode with recording and real-time streaming
-        const streamUrl = `wss://real-time-phone-call-agent.onrender.com/stream/${CallSid}`;
+        const streamUrl = `${baseWsUrl}?callSid=${CallSid}`;
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
         const bridgeTwiML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1874,7 +1907,7 @@ app.post('/voice', (req, res) => {
     </Start>
     <Dial 
         record="true" 
-        recordingStatusCallback="/webhook/recording"
+        recordingStatusCallback="${protocol}://${host}/webhook/recording"
         timeout="30"
         callerId="${From}">
         <Number>${bridgeNumber}</Number>
@@ -1891,7 +1924,7 @@ app.post('/voice', (req, res) => {
         console.log('🎙️ Real-time analysis mode (no bridge number configured)');
         
         // TwiML response for real-time streaming
-        const streamUrl = `wss://real-time-phone-call-agent.onrender.com/stream/${CallSid}`;
+        const streamUrl = `${baseWsUrl}?callSid=${CallSid}`;
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
         // Generate TwiML response for incoming calls
@@ -1907,7 +1940,11 @@ app.post('/voice', (req, res) => {
         res.type('text/xml');
         res.send(twimlResponse);
     }
-});
+}
+
+// Voice webhook endpoints (both supported for compatibility)
+app.post('/voice', handleVoiceWebhook);
+app.post('/webhook/voice', handleVoiceWebhook);
 
 // Webhook for recording completion (bridge mode)
 app.post('/webhook/recording', async (req, res) => {
