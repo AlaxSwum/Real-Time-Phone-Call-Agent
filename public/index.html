@@ -748,10 +748,30 @@
             document.getElementById('uptime').textContent = `${minutes}m ${seconds}s`;
         }
         
+        // Load webhook URL from server
+        async function loadWebhookURL() {
+            try {
+                const response = await fetch('/twilio-config');
+                const data = await response.json();
+                if (data.webhook_url) {
+                    document.getElementById('webhook-url').textContent = data.webhook_url;
+                    log(`Webhook URL loaded: ${data.webhook_url}`);
+                } else {
+                    // Fallback to /voice endpoint
+                    document.getElementById('webhook-url').textContent = `${location.origin}/voice`;
+                    log('Using fallback webhook URL: /voice');
+                }
+            } catch (error) {
+                // Fallback to /voice endpoint
+                document.getElementById('webhook-url').textContent = `${location.origin}/voice`;
+                log(`Error loading webhook URL, using fallback: ${error.message}`);
+            }
+        }
+        
         // Initialize
         window.addEventListener('load', () => {
             log('Dashboard initialized');
-            document.getElementById('webhook-url').textContent = `${location.origin}/webhook/voice`;
+            loadWebhookURL();
             
             // Auto-connect WebSocket
             setTimeout(() => {

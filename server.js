@@ -59,6 +59,19 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Debug middleware to log ALL incoming requests
+app.use((req, res, next) => {
+    const timestamp = new Date().toISOString();
+    console.log(`🌐 [${timestamp}] ${req.method} ${req.url}`);
+    console.log(`🌐 IP: ${req.ip}`);
+    console.log(`🌐 User-Agent: ${req.headers['user-agent']}`);
+    if (req.url.includes('voice') || req.url.includes('webhook')) {
+        console.log(`🌐 IMPORTANT: Webhook-related request detected!`);
+        console.log(`🌐 Headers:`, JSON.stringify(req.headers, null, 2));
+    }
+    next();
+});
+
 // Serve static files from public directory
 app.use(express.static('public'));
 
@@ -1730,6 +1743,8 @@ app.use((err, req, res, next) => {
     });
 });
 
+// Debug: Specific webhook endpoints are defined above
+
 // 404 handler
 app.use('*', (req, res) => {
     res.status(404).json({
@@ -1867,6 +1882,11 @@ app.get('/debug', (req, res) => {
 
 // Voice webhook handler function
 function handleVoiceWebhook(req, res) {
+    console.log('🔥 WEBHOOK CALLED:', req.url);
+    console.log('🔥 WEBHOOK METHOD:', req.method);
+    console.log('🔥 WEBHOOK HEADERS:', JSON.stringify(req.headers, null, 2));
+    console.log('🔥 WEBHOOK BODY:', JSON.stringify(req.body, null, 2));
+    
     const { CallSid, From, To, CallStatus } = req.body;
     console.log('📞 Incoming call received from Twilio');
     console.log('📋 Call details:', { Called: To, CallerCountry: req.body.CallerCountry, Direction: req.body.Direction, CallerState: req.body.CallerState, ToZip: req.body.ToZip, CallSid, To, CallerZip: req.body.CallerZip, ToCountry: req.body.ToCountry, CallToken: req.body.CallToken, CalledZip: req.body.CalledZip, ApiVersion: req.body.ApiVersion, CalledCity: req.body.CalledCity, CallStatus, From, AccountSid: req.body.AccountSid, CalledCountry: req.body.CalledCountry, CallerCity: req.body.CallerCity, ToCity: req.body.ToCity, FromCountry: req.body.FromCountry, Caller: req.body.Caller, FromCity: req.body.FromCity, CalledState: req.body.CalledState, FromZip: req.body.FromZip, FromState: req.body.FromState });
@@ -1950,8 +1970,15 @@ function handleVoiceWebhook(req, res) {
 }
 
 // Voice webhook endpoints (both supported for compatibility)
-app.post('/voice', handleVoiceWebhook);
-app.post('/webhook/voice', handleVoiceWebhook);
+app.post('/voice', (req, res) => {
+    console.log('✅ /voice endpoint called - CORRECT endpoint!');
+    handleVoiceWebhook(req, res);
+});
+
+app.post('/webhook/voice', (req, res) => {
+    console.log('⚠️ /webhook/voice endpoint called - legacy endpoint, but still working');
+    handleVoiceWebhook(req, res);
+});
 
 // Webhook for recording completion (bridge mode)
 app.post('/webhook/recording', async (req, res) => {
