@@ -903,22 +903,27 @@ let activeConnections = 0;
 
 wss.on('connection', (ws, req) => {
     const urlPath = req.url;
+    const clientIP = req.socket.remoteAddress;
     console.log(`SOCKET NEW WEBSOCKET CONNECTION to path: ${urlPath}`);
+    console.log(`SOCKET Client IP: ${clientIP}`);
+    console.log(`SOCKET Headers:`, req.headers);
     
     // Check if this is a Twilio Media Stream connection
     // Supports both /stream/CALLSID and /?callSid=CALLSID formats
     if (urlPath.startsWith('/stream/') || urlPath.includes('callSid=')) {
         // This is a Twilio Media Stream connection
-        console.log(`SOCKET Handling Twilio Media Stream connection`);
+        console.log(`SOCKET ✅ Routing to Twilio Media Stream handler`);
+        console.log(`SOCKET Stream path: ${urlPath}`);
         handleTwilioStreamConnection(ws, req);
     } else if (urlPath === '/ws' || urlPath === '/') {
         // This is a dashboard connection
-        console.log(`SOCKET Handling dashboard connection`);
+        console.log(`SOCKET ✅ Routing to dashboard handler`);
         handleDashboardConnection(ws, req);
     } else {
-        console.log(`ERROR Unknown WebSocket path: ${urlPath}`);
+        console.log(`ERROR ❌ Unknown WebSocket path: ${urlPath}`);
         console.log(`ERROR Available paths: /stream/CALLSID, /?callSid=CALLSID, /ws`);
-        ws.close();
+        console.log(`ERROR Client IP: ${clientIP}`);
+        ws.close(1002, 'Unknown path');
     }
 });
 
@@ -959,7 +964,10 @@ function handleDashboardConnection(ws, req) {
                     if (data.type) {
                         console.log('Unknown dashboard message type:', data.type);
                     } else {
-                        console.log('Received malformed message:', message.toString().substring(0, 100));
+                        // Likely a Twilio message that got routed to the wrong handler
+                        console.log('WARNING: Received non-dashboard message on dashboard connection');
+                        console.log('DEBUG: Message preview:', message.toString().substring(0, 50) + '...');
+                        console.log('DEBUG: This suggests a WebSocket routing issue');
                     }
             }
         } catch (error) {
@@ -2012,7 +2020,7 @@ function handleVoiceWebhook(req, res) {
         console.log(`🌉 Bridge mode: Connecting ${From} to ${bridgeNumber}`);
         
         // TwiML for bridge mode with recording and real-time streaming
-        const streamUrl = `${baseWsUrl}?callSid=${CallSid}`;
+        const streamUrl = `${baseWsUrl}/stream/${CallSid}`;
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
         const bridgeTwiML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -2040,7 +2048,7 @@ function handleVoiceWebhook(req, res) {
         console.log('🎙️ Real-time analysis mode (no bridge number configured)');
         
         // TwiML response for real-time streaming
-        const streamUrl = `${baseWsUrl}?callSid=${CallSid}`;
+        const streamUrl = `${baseWsUrl}/stream/${CallSid}`;
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
         // Generate TwiML response for incoming calls
