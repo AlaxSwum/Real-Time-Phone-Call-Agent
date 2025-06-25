@@ -1873,6 +1873,19 @@ app.get('/debug', (req, res) => {
         status: 'Server is running',
         timestamp: new Date().toISOString(),
         environment: NODE_ENV,
+        bridge_configured: !!process.env.BRIDGE_TARGET_NUMBER,
+        bridge_target: process.env.BRIDGE_TARGET_NUMBER || 'Not set',
+        endpoints_available: [
+            '/',
+            '/api',
+            '/health', 
+            '/twilio-config',
+            '/debug',
+            '/voice',
+            '/webhook/voice',
+            '/webhook/recording'
+        ],
+        deployment_version: '7082b11', // Latest commit hash
         headers: req.headers,
         url: req.url,
         method: req.method,
