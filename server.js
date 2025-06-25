@@ -769,63 +769,7 @@ function broadcastToClients(message) {
     }
 }
 
-// Twilio Voice Webhook Endpoint - REAL-TIME STREAMING
-app.post('/webhook/voice', (req, res) => {
-    console.log('CALL Incoming call received from Twilio');
-    console.log('INFO Call details:', req.body);
-    
-    // Extract call information
-    const { From, To, CallSid, Direction } = req.body;
-    
-    // Log call details
-    console.log(`CALL Call from ${From} to ${To} (${Direction})`);
-    console.log(`ID Call SID: ${CallSid}`);
-    
-    // Send to n8n webhook if configured
-    if (process.env.N8N_WEBHOOK_URL) {
-        fetch(process.env.N8N_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: 'twilio_voice_webhook',
-                data: req.body,
-                timestamp: new Date().toISOString()
-            })
-        }).catch(error => {
-            console.error('ERROR Error sending to n8n webhook:', error);
-        });
-    }
-    
-    // Broadcast call start to all connected dashboard clients
-    broadcastToClients({
-        type: 'call_started',
-        message: `Call started from ${From}`,
-        data: {
-            from: From,
-            to: To,
-            callSid: CallSid,
-            direction: Direction,
-            timestamp: new Date().toISOString()
-        }
-    });
-    
-    // TwiML response for real-time streaming
-    const streamUrl = `wss://real-time-phone-call-agent.onrender.com/stream/${CallSid}`;
-    console.log('URL Stream URL for TwiML:', streamUrl);
-    
-    // Generate TwiML response for incoming calls
-    const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Start>
-        <Stream url="${streamUrl}" track="inbound_track" />
-    </Start>
-    <Pause length="30"/>
-</Response>`;
-    
-    console.log('INFO TwiML Response:', twimlResponse);
-    res.type('text/xml');
-    res.send(twimlResponse);
-});
+// Old duplicate webhook handler removed - using handleVoiceWebhook function instead
 
 // Analyze transcript with OpenAI
 async function analyzeTranscriptWithAI(text, callSid) {
@@ -948,14 +892,19 @@ wss.on('connection', (ws, req) => {
     const urlPath = req.url;
     console.log(`SOCKET NEW WEBSOCKET CONNECTION to path: ${urlPath}`);
     
-    if (urlPath.startsWith('/stream/')) {
+    // Check if this is a Twilio Media Stream connection
+    // Supports both /stream/CALLSID and /?callSid=CALLSID formats
+    if (urlPath.startsWith('/stream/') || urlPath.includes('callSid=')) {
         // This is a Twilio Media Stream connection
+        console.log(`SOCKET Handling Twilio Media Stream connection`);
         handleTwilioStreamConnection(ws, req);
-    } else if (urlPath === '/ws') {
+    } else if (urlPath === '/ws' || urlPath === '/') {
         // This is a dashboard connection
+        console.log(`SOCKET Handling dashboard connection`);
         handleDashboardConnection(ws, req);
     } else {
         console.log(`ERROR Unknown WebSocket path: ${urlPath}`);
+        console.log(`ERROR Available paths: /stream/CALLSID, /?callSid=CALLSID, /ws`);
         ws.close();
     }
 });
@@ -1018,15 +967,28 @@ function handleDashboardConnection(ws, req) {
 
 // Twilio Media Stream WebSocket handler  
 function handleTwilioStreamConnection(ws, req) {
-    const urlParts = req.url.split('/');
-    const callSid = urlParts[urlParts.length - 1];
+    // Extract callSid from URL - supports both formats
+    let callSid = '';
+    if (req.url.includes('callSid=')) {
+        // New format: /?callSid=CALLSID
+        const urlParams = new URLSearchParams(req.url.split('?')[1]);
+        callSid = urlParams.get('callSid');
+    } else if (req.url.startsWith('/stream/')) {
+        // Old format: /stream/CALLSID
+        const urlParts = req.url.split('/');
+        callSid = urlParts[urlParts.length - 1];
+    }
+    
     console.log(`STREAM NEW TWILIO STREAM CONNECTION for call: ${callSid}`);
     console.log(`URL Stream URL: ${req.url}`);
     console.log(`BROADCAST Headers:`, req.headers);
     
-    // Initialize AssemblyAI real-time transcription
+    // Initialize variables for this stream
     let assemblyAISocket = null;
     let fullTranscript = '';
+    let lastTranscriptTime = Date.now();
+    let messageCount = 0;
+    let transcriptTimeout = null;
     
     if (process.env.ASSEMBLYAI_API_KEY) {
         console.log('AI Creating AssemblyAI real-time session...');
