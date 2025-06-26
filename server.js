@@ -1077,9 +1077,11 @@ function handleTwilioStreamConnection(ws, req) {
                         });
                         
                     } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
-                         // Enhanced processing with very low confidence thresholds to catch every word
+                         // Much lower confidence thresholds to catch all speech
                          const isPartial = transcript.message_type === 'PartialTranscript';
-                         const confidenceThreshold = isPartial ? 0.15 : 0.25; // Very low thresholds to catch all speech
+                         const confidenceThreshold = isPartial ? 0.05 : 0.1; // Very low thresholds to catch everything
+                         
+                         console.log(`🎯 TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, threshold: ${confidenceThreshold})`);
                             
                             if (transcript.text && transcript.text.trim().length > 0 && transcript.confidence >= confidenceThreshold) {
                             
@@ -1093,7 +1095,7 @@ function handleTwilioStreamConnection(ws, req) {
                             console.log(`TRANSCRIPT: "${transcript.text}" (${transcript.message_type})`);
                             
                             // Add to full transcript only for final transcripts with good confidence
-                            if (transcript.message_type === 'FinalTranscript' && transcript.confidence >= 0.5) {
+                            if (transcript.message_type === 'FinalTranscript' && transcript.confidence >= 0.2) {
                                 fullTranscript += transcript.text + ' ';
                                 console.log(`SUCCESS Added to enhanced transcript: "${transcript.text}"`);
                             }
@@ -1144,7 +1146,11 @@ function handleTwilioStreamConnection(ws, req) {
                             }
                         } else if (transcript.text && transcript.text.trim().length > 0 && transcript.confidence < confidenceThreshold) {
                             // Log low confidence but don't broadcast to avoid spam
-                            console.log(`FILTERED: "${transcript.text}" (below threshold)`);
+                            console.log(`FILTERED: "${transcript.text}" (confidence ${transcript.confidence} below threshold ${confidenceThreshold})`);
+                        } else if (transcript.text && transcript.text.trim().length === 0) {
+                            console.log(`FILTERED: Empty transcript (confidence ${transcript.confidence})`);
+                        } else if (!transcript.text) {
+                            console.log(`FILTERED: No text in transcript (confidence ${transcript.confidence})`);
                         }
                         // Completely ignore empty transcripts and very low confidence
                         
@@ -1285,7 +1291,7 @@ function handleTwilioStreamConnection(ws, req) {
     setTimeout(() => {
         twimlFinished = true;
         console.log('STREAM TwiML playback should be finished, starting audio capture...');
-    }, 2500); // Wait 2.5 seconds for TwiML to finish (reduced for better capture)
+    }, 1500); // Reduced from 2500ms to 1500ms to catch more speech
     
     ws.on('message', (message) => {
         try {
@@ -1327,7 +1333,7 @@ function handleTwilioStreamConnection(ws, req) {
                     
                     
                     // Enhanced audio forwarding to AssemblyAI for maximum accuracy
-                    if (assemblyAISocket && assemblyAISocket.readyState === 1 && data.media.payload && twimlFinished) {
+                    if (assemblyAISocket && (assemblyAISocket.readyState === 1 || assemblyAISocket.readyState === 0) && data.media.payload && twimlFinished) {
                         try {
                             // Enhanced audio processing with quality optimization
                             const audioData = data.media.payload;
@@ -1338,21 +1344,29 @@ function handleTwilioStreamConnection(ws, req) {
                                 return;
                             }
                             
-                            // Send enhanced audio message to AssemblyAI
-                            const enhancedAudioMessage = {
-                                audio_data: audioData
-                            };
-                            
-                            assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
-                            
-                            if (mediaPacketCount === 1) {
-                                console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (${audioData.length} bytes)`);
-                                console.log('INTENT Enhanced audio format: mulaw, sample rate: 8000Hz, optimized for accuracy');
-                            }
-                            
-                            // Enhanced monitoring every 300 packets (more frequent)
-                            if (mediaPacketCount % 300 === 0) {
-                                console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (high-quality stream active)`);
+                            // Send enhanced audio message to AssemblyAI only if connected
+                            if (assemblyAISocket.readyState === 1) {
+                                const enhancedAudioMessage = {
+                                    audio_data: audioData
+                                };
+                                
+                                assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
+                                
+                                if (mediaPacketCount === 1) {
+                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (${audioData.length} bytes)`);
+                                    console.log('INTENT Enhanced audio format: mulaw, sample rate: 8000Hz, optimized for accuracy');
+                                }
+                                
+                                // Enhanced monitoring every 300 packets (more frequent)
+                                if (mediaPacketCount % 300 === 0) {
+                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (high-quality stream active)`);
+                                }
+                            } else if (assemblyAISocket.readyState === 0) {
+                                // Socket still connecting - we'll retry when it's ready
+                                if (mediaPacketCount === 1) {
+                                    console.log('WAITING AssemblyAI socket still connecting, audio will be sent when ready...');
+                                }
+                                // We could buffer audio here if needed, but for real-time it's better to start fresh when connected
                             }
                         } catch (audioError) {
                             console.error('ERROR Enhanced audio forwarding error:', audioError.message);
@@ -1372,14 +1386,10 @@ function handleTwilioStreamConnection(ws, req) {
                         if (mediaPacketCount === 1) {
                             console.log('WARNING Enhanced mode: No AssemblyAI socket available');
                         }
-                    } else if (assemblyAISocket.readyState !== 1) {
+                    } else if (assemblyAISocket.readyState !== 1 && assemblyAISocket.readyState !== 0) {
                         if (mediaPacketCount === 1) {
-                            console.log(`WARNING Enhanced mode: AssemblyAI socket not ready (state: ${assemblyAISocket.readyState})`);
+                            console.log(`WARNING Enhanced mode: AssemblyAI socket in bad state (state: ${assemblyAISocket.readyState})`);
                             console.log(`DEBUG Socket states: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED`);
-                            
-                            if (assemblyAISocket.readyState === 0) {
-                                console.log('WAITING Enhanced mode: Socket still connecting, will retry when ready');
-                            }
                         }
                     } else if (!data.media.payload) {
                         if (mediaPacketCount === 1) {
@@ -2172,6 +2182,14 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         }
         
         console.log('🔐 Using Twilio credentials for recording download...');
+        console.log('🔍 Account SID:', process.env.TWILIO_ACCOUNT_SID ? process.env.TWILIO_ACCOUNT_SID.substring(0, 10) + '...' : 'MISSING');
+        console.log('🔍 Auth Token:', process.env.TWILIO_AUTH_TOKEN ? process.env.TWILIO_AUTH_TOKEN.substring(0, 10) + '...' : 'MISSING');
+        console.log('🔍 Recording URL format:', url.substring(0, 50) + '...');
+        
+        // Wait a bit for recording to be ready
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('⏱️ Waited 2 seconds for recording to be ready...');
+        
         const response = await fetch(url, {
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64'),
