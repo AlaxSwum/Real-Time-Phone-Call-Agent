@@ -21,9 +21,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
 // Initialize Deepgram client for real-time transcription
-const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c';
-console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
-const deepgram = createClient(deepgramApiKey);
+const deepgramApiKey = null; // TEMPORARILY DISABLED - force AssemblyAI usage
+console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'DISABLED - will use AssemblyAI');
+const deepgram = deepgramApiKey ? createClient(deepgramApiKey) : null;
 
 // Environment configuration
 const PORT = process.env.PORT || 3000;
@@ -1050,6 +1050,14 @@ function handleTwilioStreamConnection(ws, req) {
     console.log(`STREAM NEW TWILIO STREAM CONNECTION for call: ${callSid}`);
     console.log(`URL Stream URL: ${req.url}`);
     console.log(`BROADCAST Headers:`, req.headers);
+    
+    // DEBUG: Show transcription service selection logic
+    const hasAssemblyAI = !!process.env.ASSEMBLYAI_API_KEY;
+    const hasDeepgram = !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey);
+    console.log(`🔍 TRANSCRIPTION SERVICE DEBUG:`);
+    console.log(`  - AssemblyAI available: ${hasAssemblyAI} (API key: ${hasAssemblyAI ? 'SET' : 'MISSING'})`);
+    console.log(`  - Deepgram available: ${hasDeepgram} (API key: ${hasDeepgram ? 'SET' : 'MISSING'})`);
+    console.log(`  - Will use: ${hasAssemblyAI ? 'ASSEMBLYAI' : hasDeepgram ? 'DEEPGRAM' : 'NONE'}`);
     
     // Initialize variables for this stream
     let assemblyAISocket = null;
