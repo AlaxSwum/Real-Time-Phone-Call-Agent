@@ -1030,7 +1030,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service optimized to catch every word
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&word_boost=%5B%22schedule%22,%22meeting%22,%22email%22,%22gmail%22%5D', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 },
@@ -1081,15 +1081,16 @@ function handleTwilioStreamConnection(ws, req) {
                         });
                         
                     } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
-                         // Extremely low confidence thresholds to catch all speech
+                         // Accept everything - no confidence filtering
                          const isPartial = transcript.message_type === 'PartialTranscript';
-                         const confidenceThreshold = isPartial ? 0.01 : 0.01; // Almost accept everything
+                         const confidenceThreshold = 0; // Accept everything including 0 confidence
                          
-                         console.log(`🎯 TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, threshold: ${confidenceThreshold})`);
+                         console.log(`🎯 TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, words: ${transcript.words ? transcript.words.length : 0})`);
+                         
+                         // Log all transcripts, even empty ones, to see patterns
+                         if (transcript.text && transcript.text.trim().length > 0) {
+                             console.log(`🎉 DETECTED SPEECH: "${transcript.text}" (confidence: ${transcript.confidence})`);
                             
-                            if (transcript.text && transcript.text.trim().length > 0 && transcript.confidence >= confidenceThreshold) {
-                            
-                        // Clear timeout when we get actual transcripts
                             if (transcriptTimeout) {
                             clearInterval(transcriptTimeout);
                             transcriptTimeout = null;
@@ -1098,8 +1099,8 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             console.log(`TRANSCRIPT: "${transcript.text}" (${transcript.message_type})`);
                             
-                            // Add to full transcript only for final transcripts with good confidence
-                            if (transcript.message_type === 'FinalTranscript' && transcript.confidence >= 0.2) {
+                            // Add to full transcript only for final transcripts with any confidence
+                            if (transcript.message_type === 'FinalTranscript') {
                                 fullTranscript += transcript.text + ' ';
                                 console.log(`SUCCESS Added to enhanced transcript: "${transcript.text}"`);
                             }
@@ -1148,15 +1149,11 @@ function handleTwilioStreamConnection(ws, req) {
                                     console.error('❌ Parallel processing error:', error);
                                 });
                             }
-                        } else if (transcript.text && transcript.text.trim().length > 0 && transcript.confidence < confidenceThreshold) {
-                            // Log low confidence but don't broadcast to avoid spam
-                            console.log(`FILTERED: "${transcript.text}" (confidence ${transcript.confidence} below threshold ${confidenceThreshold})`);
-                        } else if (transcript.text && transcript.text.trim().length === 0) {
-                            console.log(`FILTERED: Empty transcript (confidence ${transcript.confidence})`);
-                        } else if (!transcript.text) {
-                            console.log(`FILTERED: No text in transcript (confidence ${transcript.confidence})`);
-                        }
-                        // Completely ignore empty transcripts and very low confidence
+                        } else if (transcript.confidence === 0) {
+                            console.log(`FILTERED: Empty/silent transcript (confidence 0)`);
+                                                 } else {
+                             console.log(`FILTERED: "${transcript.text}" (confidence ${transcript.confidence})`);
+                         }
                         
                     } else if (transcript.message_type === 'SessionTerminated') {
                         console.log('END AssemblyAI session terminated for call:', callSid);
@@ -1350,21 +1347,47 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             // Send enhanced audio message to AssemblyAI only if connected
                             if (assemblyAISocket.readyState === 1) {
-                                // Send raw mulaw audio data (revert PCM conversion test)
+                                // AssemblyAI real-time needs PCM format, not raw mulaw
+                                const audioBuffer = Buffer.from(audioData, 'base64');
+                                
+                                // Analyze audio content for debugging
+                                if (mediaPacketCount === 1) {
+                                    let nonZeroBytes = 0;
+                                    let maxValue = 0;
+                                    for (let i = 0; i < Math.min(audioBuffer.length, 50); i++) {
+                                        if (audioBuffer[i] !== 0 && audioBuffer[i] !== 255) nonZeroBytes++;
+                                        maxValue = Math.max(maxValue, audioBuffer[i]);
+                                    }
+                                    console.log(`🔊 AUDIO ANALYSIS: ${nonZeroBytes}/50 non-zero bytes, max value: ${maxValue}`);
+                                    if (nonZeroBytes < 10) {
+                                        console.log(`⚠️ WARNING: Audio appears to be mostly silence`);
+                                    }
+                                }
+                                
+                                // Convert mulaw to PCM for AssemblyAI compatibility
+                                const pcmBuffer = convertMulawToPcm(audioBuffer);
+                                const pcmBase64 = pcmBuffer.toString('base64');
+                                
+                                // Debug PCM conversion
+                                if (mediaPacketCount === 1) {
+                                    console.log(`🔊 PCM CONVERSION: ${audioBuffer.length} mulaw bytes → ${pcmBuffer.length} PCM bytes`);
+                                    console.log(`🔊 PCM sample analysis: first 10 values: [${Array.from(pcmBuffer.slice(0, 20)).map((v, i) => i % 2 === 0 ? pcmBuffer.readInt16LE(i) : null).filter(v => v !== null).slice(0, 10).join(', ')}]`);
+                                }
+                                
                                 const enhancedAudioMessage = {
-                                    audio_data: audioData
+                                    audio_data: pcmBase64
                                 };
                                 
                                 assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (${audioData.length} bytes raw mulaw)`);
-                                    console.log('INTENT Enhanced audio format: Raw mulaw, sample rate: 8000Hz, word boosted');
+                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (mulaw ${audioBuffer.length}→PCM ${pcmBuffer.length} bytes)`);
+                                    console.log('INTENT Enhanced audio format: mulaw→PCM converted, sample rate: 8000Hz, word boosted');
                                 }
                                 
                                 // Enhanced monitoring every 300 packets (more frequent)
                                 if (mediaPacketCount % 300 === 0) {
-                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (raw mulaw stream active)`);
+                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (mulaw→PCM converted stream active)`);
                                 }
                             } else if (assemblyAISocket.readyState === 0) {
                                 // Socket still connecting - we'll retry when it's ready
