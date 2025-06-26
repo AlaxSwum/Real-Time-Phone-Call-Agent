@@ -1075,50 +1075,50 @@ async function handleTwilioStreamConnection(ws, req) {
                         console.log(`DEBUG Deepgram connection: ${ws.deepgramLive ? 'EXISTS' : 'MISSING'}`);
                     }
                     
-                    // Handle Deepgram audio forwarding with mulaw to linear16 conversion
-                    if (ws.deepgramLive && data.media.payload && twimlFinished) {
+                    // Handle audio processing (WebSocket or HTTP chunked fallback)
+                    if (data.media.payload && twimlFinished) {
                         try {
                             const mulawData = Buffer.from(data.media.payload, 'base64');
                             
                             // Convert mulaw to linear16 PCM for Deepgram compatibility
                             const linear16Data = convertMulawToLinear16(mulawData);
                             
-                            if (ws.deepgramConnected()) {
+                            // Try WebSocket first, fallback to HTTP chunked processing
+                            if (ws.deepgramLive && ws.deepgramConnected()) {
+                                // WebSocket mode
                                 ws.deepgramLive.send(linear16Data);
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`✅ DEEPGRAM: First audio packet converted and sent`);
-                                    console.log(`🔄 CONVERSION: mulaw ${mulawData.length} bytes → linear16 upsampled ${linear16Data.length} bytes`);
-                                    console.log(`📊 SAMPLE RATE: 8kHz → 16kHz upsampling applied`);
-                                    
-                                    // Analyze converted audio for debugging
-                                    let nonZeroSamples = 0;
-                                    let maxValue = 0;
-                                    for (let i = 0; i < Math.min(linear16Data.length, 100); i += 2) {
-                                        const sample = linear16Data.readInt16LE(i);
-                                        if (Math.abs(sample) > 100) nonZeroSamples++;
-                                        maxValue = Math.max(maxValue, Math.abs(sample));
-                                    }
-                                    console.log(`🔊 AUDIO ANALYSIS: ${nonZeroSamples}/50 meaningful samples, max amplitude: ${maxValue}`);
-                                    console.log(`🧪 DEEPGRAM: Expecting results within 2-3 seconds with 16kHz linear16 format...`);
+                                    console.log(`✅ DEEPGRAM WEBSOCKET: First audio packet sent`);
+                                    console.log(`🔄 CONVERSION: mulaw ${mulawData.length} bytes → linear16 ${linear16Data.length} bytes`);
                                 }
                                 
-                                // Log progress every 300 packets and check for results
                                 if (mediaPacketCount % 300 === 0) {
-                                    console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
-                                    console.log(`⚠️ DEEPGRAM DEBUG: If no results received yet, there may be a connection issue`);
+                                    console.log(`🎙️ DEEPGRAM WEBSOCKET: ${mediaPacketCount} audio packets sent`);
+                                }
+                            } else if (ws.chunkProcessor) {
+                                // HTTP chunked processing mode
+                                ws.chunkBuffer = Buffer.concat([ws.chunkBuffer, linear16Data]);
+                                
+                                if (mediaPacketCount === 1) {
+                                    console.log(`✅ HTTP CHUNKED: First audio packet buffered`);
+                                    console.log(`🔄 CONVERSION: mulaw ${mulawData.length} bytes → linear16 ${linear16Data.length} bytes`);
+                                    console.log(`📊 BUFFER: Audio will be processed in 3-second chunks`);
+                                }
+                                
+                                if (mediaPacketCount % 300 === 0) {
+                                    console.log(`🎙️ HTTP CHUNKED: ${mediaPacketCount} packets buffered, buffer size: ${ws.chunkBuffer.length} bytes`);
                                 }
                             } else {
-                                // Buffer converted audio until connected
-                                if (ws.deepgramBuffer) {
-                                    ws.deepgramBuffer.push(linear16Data);
-                                    if (ws.deepgramBuffer.length > 100) {
-                                        ws.deepgramBuffer.shift(); // Keep only last 100 packets
-                                    }
+                                // Buffer until either WebSocket or HTTP chunked is ready
+                                if (!ws.audioBuffer) ws.audioBuffer = [];
+                                ws.audioBuffer.push(linear16Data);
+                                if (ws.audioBuffer.length > 100) {
+                                    ws.audioBuffer.shift(); // Keep only last 100 packets
                                 }
                             }
-                        } catch (deepgramError) {
-                            console.error('❌ Deepgram audio forwarding error:', deepgramError.message);
+                        } catch (audioError) {
+                            console.error('❌ Audio processing error:', audioError.message);
                         }
                     }
 
@@ -1128,9 +1128,61 @@ async function handleTwilioStreamConnection(ws, req) {
                     console.log('STREAM STREAM STOPPED for call:', callSid);
                     console.log(`STATS Total audio packets received: ${mediaPacketCount}`);
                     
+                    // Clean up WebSocket connection
                     if (ws.deepgramLive) {
-                        console.log('🛑 DEEPGRAM: Finishing transcription session...');
+                        console.log('🛑 DEEPGRAM WEBSOCKET: Finishing transcription session...');
                         ws.deepgramLive.finish();
+                    }
+                    
+                    // Clean up HTTP chunked processing
+                    if (ws.chunkProcessor) {
+                        console.log('🛑 HTTP CHUNKED: Processing final audio chunk...');
+                        clearInterval(ws.chunkProcessor);
+                        
+                        // Process any remaining audio in buffer
+                        if (ws.chunkBuffer && ws.chunkBuffer.length > 0) {
+                            (async () => {
+                                try {
+                                    console.log(`🔄 Processing final chunk (${ws.chunkBuffer.length} bytes)`);
+                                    
+                                    const response = await fetch('https://api.deepgram.com/v1/listen', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Authorization': `Token ${deepgramApiKey}`,
+                                            'Content-Type': 'audio/wav',
+                                            'Accept': 'application/json'
+                                        },
+                                        body: ws.chunkBuffer
+                                    });
+                                    
+                                    if (response.ok) {
+                                        const result = await response.json();
+                                        const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+                                        
+                                        if (transcript && transcript.trim().length > 0) {
+                                            console.log(`📝 FINAL CHUNK TRANSCRIPT: "${transcript}"`);
+                                            
+                                            broadcastToClients({
+                                                type: 'live_transcript',
+                                                message: transcript,
+                                                data: {
+                                                    callSid: callSid,
+                                                    text: transcript,
+                                                    confidence: result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0,
+                                                    is_final: true,
+                                                    provider: 'deepgram_http_final',
+                                                    timestamp: new Date().toISOString()
+                                                }
+                                            });
+                                            
+                                            detectAndProcessIntent(transcript, callSid);
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('❌ Final chunk processing error:', error.message);
+                                }
+                            })();
+                        }
                     }
                     
                     // Final analysis if we have a full transcript
@@ -2083,6 +2135,89 @@ function convertMulawToLinear16(mulawBuffer) {
     return upsampledBuffer;
 }
 
+// HTTP-based chunked audio processing fallback
+function initializeHttpChunkedProcessing(callSid, ws) {
+    console.log('🔄 Initializing HTTP chunked processing for call:', callSid);
+    
+    // Audio buffer for chunked processing
+    ws.audioChunks = [];
+    ws.chunkBuffer = Buffer.alloc(0);
+    ws.lastProcessTime = Date.now();
+    ws.chunkCount = 0;
+    
+    // Process audio chunks every 3 seconds
+    ws.chunkProcessor = setInterval(async () => {
+        if (ws.chunkBuffer.length > 0) {
+            try {
+                console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
+                
+                // Convert chunk to base64 for HTTP API
+                const base64Audio = ws.chunkBuffer.toString('base64');
+                
+                // Send to Deepgram HTTP API
+                const response = await fetch('https://api.deepgram.com/v1/listen', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Token ${deepgramApiKey}`,
+                        'Content-Type': 'audio/wav',
+                        'Accept': 'application/json'
+                    },
+                    body: ws.chunkBuffer
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+                    
+                    if (transcript && transcript.trim().length > 0) {
+                        console.log(`📝 HTTP CHUNK TRANSCRIPT: "${transcript}"`);
+                        
+                        // Broadcast transcript
+                        broadcastToClients({
+                            type: 'live_transcript',
+                            message: transcript,
+                            data: {
+                                callSid: callSid,
+                                text: transcript,
+                                confidence: result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0,
+                                is_final: true,
+                                provider: 'deepgram_http',
+                                chunk_number: ws.chunkCount,
+                                timestamp: new Date().toISOString()
+                            }
+                        });
+                        
+                        // Process for intent detection
+                        detectAndProcessIntent(transcript, callSid);
+                        analyzeTranscriptWithAI(transcript, callSid);
+                    }
+                } else {
+                    console.error(`❌ HTTP chunk processing failed: ${response.status} ${response.statusText}`);
+                }
+                
+                // Clear buffer for next chunk
+                ws.chunkBuffer = Buffer.alloc(0);
+                
+            } catch (error) {
+                console.error('❌ HTTP chunk processing error:', error.message);
+            }
+        }
+    }, 3000); // Process every 3 seconds
+    
+    console.log('✅ HTTP chunked processing initialized - will process audio every 3 seconds');
+    
+    broadcastToClients({
+        type: 'http_transcription_ready',
+        message: 'HTTP-based transcription ready (3-second chunks)',
+        data: {
+            callSid: callSid,
+            method: 'http_chunked',
+            interval: '3_seconds',
+            timestamp: new Date().toISOString()
+        }
+    });
+}
+
 // Deepgram real-time transcription initialization
 async function initializeDeepgramRealtime(callSid, ws) {
     console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
@@ -2331,41 +2466,24 @@ async function initializeDeepgramRealtime(callSid, ws) {
         });
 
         deepgramLive.on('error', (error) => {
-            console.error('❌ DEEPGRAM ERROR:', error);
-            console.error('🔍 Error type:', typeof error);
-            console.error('🔍 Error details:', error);
+            console.error('❌ DEEPGRAM WEBSOCKET ERROR:', error);
             console.error('🔍 WebSocket URL that failed:', error.url || 'Unknown URL');
             console.error('🔍 Ready State:', error.readyState || 'Unknown');
             
-            let errorMessage = error.message || 'Unknown Deepgram error';
-            let solution = 'Check logs for details';
+            // WebSocket failed - switch to HTTP chunked processing fallback
+            console.log('🔄 WEBSOCKET FAILED - Switching to HTTP chunked processing fallback...');
+            console.log('💡 This is likely due to Render.com blocking WebSocket connections to Deepgram');
             
-            // Provide specific solutions for common errors
-            if (error.message && error.message.includes('network error')) {
-                solution = 'Network connectivity issue - possible firewall blocking WebSocket to api.deepgram.com';
-            } else if (error.message && error.message.includes('401')) {
-                solution = 'Invalid API key - check DEEPGRAM_API_KEY environment variable';
-            } else if (error.message && error.message.includes('403')) {
-                solution = 'Insufficient permissions - check Deepgram account settings';
-            } else if (error.message && error.message.includes('non-101 status code')) {
-                solution = 'WebSocket handshake failed - possible network/proxy issue or Deepgram service problem';
-                console.error('🚨 WEBSOCKET HANDSHAKE FAILURE - This suggests:');
-                console.error('   1. Network/firewall blocking WebSocket connections to api.deepgram.com');
-                console.error('   2. Proxy server interfering with WebSocket upgrade');
-                console.error('   3. Deepgram service temporarily unavailable');
-                console.error('   4. Invalid WebSocket URL parameters');
-            }
+            // Initialize HTTP-based chunked processing
+            initializeHttpChunkedProcessing(callSid, ws);
             
             broadcastToClients({
-                type: 'deepgram_error',
-                message: `Deepgram error: ${errorMessage}`,
+                type: 'transcription_fallback',
+                message: 'Switched to HTTP-based transcription due to WebSocket blocking',
                 data: {
                     callSid: callSid,
-                    error: errorMessage,
-                    solution: solution,
-                    websocket_url: error.url || 'Unknown',
-                    ready_state: error.readyState || 'Unknown',
-                    fallback: 'Call recording will be analyzed after completion',
+                    fallback_method: 'http_chunked_processing',
+                    reason: 'WebSocket connection blocked by hosting platform',
                     timestamp: new Date().toISOString()
                 }
             });
