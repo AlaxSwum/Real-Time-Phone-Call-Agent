@@ -1074,6 +1074,7 @@ function handleTwilioStreamConnection(ws, req) {
                 console.log('INTENT Optimized for maximum accuracy with word boost');
                 console.log('🔑 API Key status:', process.env.ASSEMBLYAI_API_KEY ? 'PROVIDED' : 'MISSING');
                 console.log('🔑 API Key length:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0);
+                console.log('🔑 API Key prefix:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 8) + '...' : 'N/A');
                 
                 // Send OPTIMAL session configuration for phone call transcription
                 try {
@@ -1314,7 +1315,21 @@ function handleTwilioStreamConnection(ws, req) {
                         closeMessage = 'AUTHENTICATION ERROR - Invalid API key or quota exceeded';
                         console.error('❌ CRITICAL: AssemblyAI API key is invalid or quota exceeded');
                         console.error('🔑 API Key provided:', process.env.ASSEMBLYAI_API_KEY ? 'YES (length: ' + process.env.ASSEMBLYAI_API_KEY.length + ')' : 'NO');
+                        console.error('🔑 API Key prefix:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 8) + '...' : 'N/A');
                         console.error('💡 Solution: Check your AssemblyAI account at https://www.assemblyai.com/app');
+                        console.error('💡 Note: Real-time transcription requires higher tier than basic transcription');
+                        
+                        // Broadcast helpful error message to dashboard
+                        broadcastToClients({
+                            type: 'assemblyai_quota_error',
+                            message: 'AssemblyAI quota exceeded or invalid API key - check your account',
+                            data: {
+                                callSid: callSid,
+                                error: 'Quota exceeded or invalid key',
+                                solution: 'Visit https://www.assemblyai.com/app to check your account',
+                                timestamp: new Date().toISOString()
+                            }
+                        });
                         break;
                     case 4102:
                         closeMessage = 'RATE LIMIT ERROR - Too many requests';
@@ -1370,6 +1385,17 @@ function handleTwilioStreamConnection(ws, req) {
             console.error('ERROR FAILED TO CREATE ASSEMBLYAI SESSION:', error);
             console.error('DEBUG Error details:', error.message);
             console.error('DEBUG Error stack:', error.stack);
+            
+            // Broadcast error to dashboard
+            broadcastToClients({
+                type: 'assemblyai_setup_error',
+                message: 'Failed to initialize AssemblyAI - call will proceed without real-time transcription',
+                data: {
+                    callSid: callSid,
+                    error: error.message,
+                    timestamp: new Date().toISOString()
+                }
+            });
         }
     } else {
         console.log('WARNING NO ASSEMBLYAI API KEY - Real-time transcription disabled');
