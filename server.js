@@ -21,7 +21,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
 // Initialize Deepgram client for real-time transcription
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c');
+const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c';
+console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
+const deepgram = createClient(deepgramApiKey);
 
 // Environment configuration
 const PORT = process.env.PORT || 3000;
@@ -2627,26 +2629,37 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
 // Deepgram real-time transcription initialization
 function initializeDeepgramRealtime(callSid, ws) {
     console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
+    console.log('🔑 Using Deepgram API Key:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
+    
+    if (!deepgramApiKey) {
+        console.error('❌ No Deepgram API key available');
+        broadcastToClients({
+            type: 'transcription_fallback',
+            message: 'Deepgram API key missing - will analyze recording after call',
+            data: {
+                callSid: callSid,
+                error: 'Missing API key',
+                fallbackMethod: 'post_call_recording_analysis',
+                timestamp: new Date().toISOString()
+            }
+        });
+        return null;
+    }
     
     try {
-        // Create Deepgram live connection optimized for phone calls
+        // Create Deepgram live connection with minimal config for stability
+        console.log('🔗 Creating Deepgram connection with minimal config...');
         const deepgramLive = deepgram.listen.live({
             model: 'nova-2',
             language: 'en-US',
             smart_format: true,
             interim_results: true,
-            utterance_end_ms: 500,
+            utterance_end_ms: 1000,
             vad_events: true,
             punctuate: true,
-            diarize: false,
             sample_rate: 8000,
             channels: 1,
-            encoding: 'mulaw',
-            // Phone call optimizations
-            endpointing: 300,
-            keywords: ['meeting:3', 'schedule:3', 'email:3', 'appointment:3'],
-            numerals: true,
-            search: ['hello', 'meeting', 'schedule', 'email']
+            encoding: 'mulaw'
         });
 
         let isConnected = false;
@@ -2655,9 +2668,26 @@ function initializeDeepgramRealtime(callSid, ws) {
         let mediaPacketCount = 0;
         let twimlFinished = true; // Start immediately for Deepgram
 
+        // Add connection timeout
+        const connectionTimeout = setTimeout(() => {
+            if (!isConnected) {
+                console.error('⏰ DEEPGRAM CONNECTION TIMEOUT after 10 seconds');
+                broadcastToClients({
+                    type: 'deepgram_timeout',
+                    message: 'Deepgram connection timeout - will analyze recording after call',
+                    data: {
+                        callSid: callSid,
+                        error: 'Connection timeout',
+                        timestamp: new Date().toISOString()
+                    }
+                });
+            }
+        }, 10000);
+
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
             isConnected = true;
+            clearTimeout(connectionTimeout);
             
             // Broadcast connection success
             broadcastToClients({
@@ -2757,13 +2787,31 @@ function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('error', (error) => {
             console.error('❌ DEEPGRAM ERROR:', error);
+            console.error('🔍 Error type:', typeof error);
+            console.error('🔍 Error details:', error);
+            
+            let errorMessage = error.message || 'Unknown Deepgram error';
+            let solution = 'Check logs for details';
+            
+            // Provide specific solutions for common errors
+            if (error.message && error.message.includes('network error')) {
+                solution = 'Network connectivity issue - check internet connection';
+            } else if (error.message && error.message.includes('401')) {
+                solution = 'Invalid API key - check DEEPGRAM_API_KEY environment variable';
+            } else if (error.message && error.message.includes('403')) {
+                solution = 'Insufficient permissions - check Deepgram account settings';
+            } else if (error.message && error.message.includes('non-101 status code')) {
+                solution = 'WebSocket handshake failed - API key or configuration issue';
+            }
             
             broadcastToClients({
                 type: 'deepgram_error',
-                message: `Deepgram error: ${error.message}`,
+                message: `Deepgram error: ${errorMessage}`,
                 data: {
                     callSid: callSid,
-                    error: error.message,
+                    error: errorMessage,
+                    solution: solution,
+                    fallback: 'Call recording will be analyzed after completion',
                     timestamp: new Date().toISOString()
                 }
             });
