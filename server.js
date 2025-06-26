@@ -154,12 +154,14 @@ async function detectAndProcessIntent(text, callSid) {
         'going to have a meeting',
         'would like to schedule',
         'want to schedule',
+        'like to schedule',        // Added this common pattern
         'arrange a medium',        // Speech-to-text error
         'set up a medium',         // Speech-to-text error
         'schedule a medium',       // Speech-to-text error
         'meeting on',
         'meeting at',
         'meeting next',
+        'a meeting',               // Added simple pattern
         'medium on',               // Speech-to-text error
         'medium at',               // Speech-to-text error
         'medium next',             // Speech-to-text error
@@ -1691,7 +1693,16 @@ function extractEmailFromTranscript(transcript) {
         /([a-zA-Z0-9._-]+)\s+(gmail|g\s*mail|jemail|outlook|out\s*look|yahoo|ya\s*hoo|hotmail|hot\s*mail|icloud|i\s*cloud)\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi,
         
         // Context-aware patterns (looking for email keywords nearby)
-        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+|reach\s+me\s+at\s+)([a-zA-Z0-9._-]+)\s+at\s+([a-zA-Z0-9.-]+)\s+(token|talking|common|calm|come|coming|dot\s+com)/gi
+        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+|reach\s+me\s+at\s+)([a-zA-Z0-9._-]+)\s+at\s+([a-zA-Z0-9.-]+)\s+(token|talking|common|calm|come|coming|dot\s+com)/gi,
+        
+        // Spelled out email patterns: "s w u m p y a e at gmail dot com"
+        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z]\s+){3,}(at\s+|@\s*)(gmail|outlook|yahoo|hotmail|icloud)\s+(dot\s+com|token|talking|common|calm)/gi,
+        
+        // Handle sequences like "o and e f w" for individual characters
+        /(email\s+is\s+|my\s+email\s+)([a-z](\s+(and\s+)?)){2,}([a-z]\s*){0,5}\s*(at\s+|@\s*)?([a-z](\s+(and\s+)?)){1,}\s*(dot\s+com|token|talking|common|calm)/gi,
+        
+        // Simple character sequence: "a b c at gmail dot com"
+        /([a-z]\s+){2,}at\s+(gmail|outlook|yahoo|hotmail|icloud)\s+(dot\s+com|token|talking|common|calm)/gi
     ];
     
     for (const pattern of enhancedEmailPatterns) {
@@ -1710,7 +1721,25 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/hot\s*mail/gi, 'hotmail')
                     .replace(/i\s*cloud/gi, 'icloud')
                     .replace(/proton\s*mail/gi, 'protonmail')
-                    .replace(/\s+/g, '');
+                    .replace(/\s+(and\s+)?/g, ''); // Remove spaces and "and" words
+                
+                // Special handling for spelled out characters
+                if (cleaned.includes(' ')) {
+                    // Handle "o and e f w crown" type patterns
+                    const words = cleaned.split(/\s+/);
+                    let emailParts = [];
+                    for (const word of words) {
+                        if (word.length === 1 && /[a-z0-9]/i.test(word)) {
+                            emailParts.push(word);
+                        } else if (['gmail', 'outlook', 'yahoo', 'hotmail', 'icloud'].includes(word.toLowerCase())) {
+                            emailParts.push('@' + word.toLowerCase() + '.com');
+                            break;
+                        }
+                    }
+                    if (emailParts.length > 1) {
+                        cleaned = emailParts.join('');
+                    }
+                }
                 
                 const validatedEmail = validateAndCleanEmail(cleaned);
                 if (validatedEmail) {
@@ -1725,7 +1754,11 @@ function extractEmailFromTranscript(transcript) {
         // Find something like "alex gmail" and assume it's "alex@gmail.com"
         /([a-zA-Z0-9._-]{2,})\s+(gmail|outlook|yahoo|hotmail|icloud)\b/gi,
         // Find "my email alex" patterns
-        /(email\s+is\s+|my\s+email\s+)([a-zA-Z0-9._-]{2,})/gi
+        /(email\s+is\s+|my\s+email\s+)([a-zA-Z0-9._-]{2,})/gi,
+        // Handle "o and e f w crown" type patterns (individual letters)
+        /(email\s+is\s+|my\s+email\s+)(([a-z]\s*(and\s+)?){2,}[a-z])\s*(crown|gmail|outlook|yahoo|hotmail|icloud|token|talking|common|calm|come|dot\s+com)/gi,
+        // Handle sequences like "s w u m p y a e" followed by provider
+        /([a-z]\s+){3,}(crown|gmail|outlook|yahoo|hotmail|icloud|token|talking|common|calm)/gi
     ];
     
     for (const pattern of partialPatterns) {
@@ -1736,8 +1769,11 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/(email\s+is\s+|my\s+email\s+)/gi, '')
                     .replace(/\s+/g, '');
                 
-                // If it looks like "alexgmail", try to split it
-                if (processed.includes('gmail') && !processed.includes('@')) {
+                // Handle spelled-out emails like "o and e f w crown"
+                if (processed.includes('crown')) {
+                    // "crown" might be ".com" or "gmail.com"
+                    processed = processed.replace(/crown/gi, '@gmail.com');
+                } else if (processed.includes('gmail') && !processed.includes('@')) {
                     processed = processed.replace('gmail', '@gmail.com');
                 } else if (processed.includes('outlook') && !processed.includes('@')) {
                     processed = processed.replace('outlook', '@outlook.com');
@@ -1748,6 +1784,12 @@ function extractEmailFromTranscript(transcript) {
                 } else if (processed.includes('icloud') && !processed.includes('@')) {
                     processed = processed.replace('icloud', '@icloud.com');
                 }
+                
+                // Clean up character sequences like "oandeefw" → "oefw"
+                processed = processed
+                    .replace(/and/g, '')
+                    .replace(/\s+/g, '')
+                    .toLowerCase();
                 
                 const validatedEmail = validateAndCleanEmail(processed);
                 if (validatedEmail) {
