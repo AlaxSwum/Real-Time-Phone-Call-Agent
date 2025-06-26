@@ -1467,18 +1467,27 @@ function handleTwilioStreamConnection(ws, req) {
                         try {
                             const audioData = Buffer.from(data.media.payload, 'base64');
                             
-                            if (ws.deepgramConnected()) {
-                                ws.deepgramLive.send(audioData);
-                                
-                                if (mediaPacketCount === 1) {
-                                    console.log(`✅ DEEPGRAM: First audio packet sent (${audioData.length} bytes)`);
-                                }
-                                
-                                // Log progress every 300 packets
-                                if (mediaPacketCount % 300 === 0) {
-                                    console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
-                                }
-                            } else {
+                                                         if (ws.deepgramConnected()) {
+                                 ws.deepgramLive.send(audioData);
+                                 
+                                 if (mediaPacketCount === 1) {
+                                     console.log(`✅ DEEPGRAM: First audio packet sent (${audioData.length} bytes)`);
+                                     
+                                     // Analyze first audio packet for debugging
+                                     let nonZeroBytes = 0;
+                                     let maxValue = 0;
+                                     for (let i = 0; i < Math.min(audioData.length, 50); i++) {
+                                         if (audioData[i] !== 0 && audioData[i] !== 127 && audioData[i] !== 255) nonZeroBytes++;
+                                         maxValue = Math.max(maxValue, audioData[i]);
+                                     }
+                                     console.log(`🔊 DEEPGRAM AUDIO ANALYSIS: ${nonZeroBytes}/50 meaningful bytes, max: ${maxValue}`);
+                                 }
+                                 
+                                 // Log progress every 300 packets
+                                 if (mediaPacketCount % 300 === 0) {
+                                     console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
+                                 }
+                             } else {
                                 // Buffer audio until connected
                                 if (ws.deepgramBuffer) {
                                     ws.deepgramBuffer.push(audioData);
@@ -2620,19 +2629,24 @@ function initializeDeepgramRealtime(callSid, ws) {
     console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
     
     try {
-        // Create Deepgram live connection
+        // Create Deepgram live connection optimized for phone calls
         const deepgramLive = deepgram.listen.live({
             model: 'nova-2',
             language: 'en-US',
             smart_format: true,
             interim_results: true,
-            utterance_end_ms: 1000,
+            utterance_end_ms: 500,
             vad_events: true,
             punctuate: true,
-            diarize: false, // Disable speaker detection for single track
+            diarize: false,
             sample_rate: 8000,
             channels: 1,
-            encoding: 'mulaw'
+            encoding: 'mulaw',
+            // Phone call optimizations
+            endpointing: 300,
+            keywords: ['meeting:3', 'schedule:3', 'email:3', 'appointment:3'],
+            numerals: true,
+            search: ['hello', 'meeting', 'schedule', 'email']
         });
 
         let isConnected = false;
@@ -2666,51 +2680,79 @@ function initializeDeepgramRealtime(callSid, ws) {
         });
 
         deepgramLive.on('results', (data) => {
-            const transcript = data.channel.alternatives[0];
+            console.log('📥 DEEPGRAM RAW RESULT:', JSON.stringify(data, null, 2));
             
-            if (transcript && transcript.transcript) {
-                const confidence = transcript.confidence || 0;
-                const isFinal = data.is_final;
+            if (data.channel && data.channel.alternatives && data.channel.alternatives[0]) {
+                const transcript = data.channel.alternatives[0];
                 
-                // Filter low quality transcripts
-                if (confidence > 0.3 && transcript.transcript.trim().length > 2) {
-                    console.log(`🎯 DEEPGRAM: "${transcript.transcript}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
+                if (transcript && transcript.transcript) {
+                    const confidence = transcript.confidence || 0;
+                    const isFinal = data.is_final;
                     
-                    // Add to full transcript if final
-                    if (isFinal) {
-                        fullTranscript += transcript.transcript + ' ';
-                    }
+                    console.log(`🎯 DEEPGRAM TRANSCRIPT: "${transcript.transcript}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
                     
-                    // Broadcast to dashboard
-                    broadcastToClients({
-                        type: 'live_transcript',
-                        message: transcript.transcript,
-                        data: {
-                            callSid: callSid,
-                            text: transcript.transcript,
-                            confidence: confidence,
-                            is_final: isFinal,
-                            provider: 'deepgram',
-                            timestamp: new Date().toISOString()
-                        }
-                    });
-                    
-                    // Process final transcripts for intent detection
-                    if (isFinal && transcript.transcript.trim().length > 2) {
-                        console.log('🧠 Processing Deepgram transcript for intents...');
+                    // Filter low quality transcripts
+                    if (confidence > 0.2 && transcript.transcript.trim().length > 1) {
+                        console.log(`✅ DEEPGRAM ACCEPTED: "${transcript.transcript}"`);
                         
-                        // Run intent detection and AI analysis in parallel
-                        Promise.allSettled([
-                            detectAndProcessIntent(transcript.transcript, callSid),
-                            analyzeTranscriptWithAI(transcript.transcript, callSid)
-                        ]).then(results => {
-                            console.log('✅ Deepgram transcript processing completed');
-                        }).catch(error => {
-                            console.error('❌ Deepgram transcript processing error:', error);
+                        // Add to full transcript if final
+                        if (isFinal) {
+                            fullTranscript += transcript.transcript + ' ';
+                        }
+                        
+                        // Broadcast to dashboard
+                        broadcastToClients({
+                            type: 'live_transcript',
+                            message: transcript.transcript,
+                            data: {
+                                callSid: callSid,
+                                text: transcript.transcript,
+                                confidence: confidence,
+                                is_final: isFinal,
+                                provider: 'deepgram',
+                                timestamp: new Date().toISOString()
+                            }
                         });
+                        
+                        // Process final transcripts for intent detection
+                        if (isFinal && transcript.transcript.trim().length > 2) {
+                            console.log('🧠 Processing Deepgram transcript for intents...');
+                            
+                            // Run intent detection and AI analysis in parallel
+                            Promise.allSettled([
+                                detectAndProcessIntent(transcript.transcript, callSid),
+                                analyzeTranscriptWithAI(transcript.transcript, callSid)
+                            ]).then(results => {
+                                console.log('✅ Deepgram transcript processing completed');
+                            }).catch(error => {
+                                console.error('❌ Deepgram transcript processing error:', error);
+                            });
+                        }
+                    } else {
+                        console.log(`🚫 DEEPGRAM FILTERED: "${transcript.transcript}" (confidence: ${confidence.toFixed(2)}, length: ${transcript.transcript.trim().length})`);
                     }
+                } else {
+                    console.log('📥 DEEPGRAM: No transcript in alternatives[0]');
                 }
+            } else {
+                console.log('📥 DEEPGRAM: No channel/alternatives in result');
             }
+        });
+
+        deepgramLive.on('utteranceEnd', (data) => {
+            console.log('🗣️ DEEPGRAM UTTERANCE END:', JSON.stringify(data, null, 2));
+        });
+
+        deepgramLive.on('speechStarted', (data) => {
+            console.log('🎤 DEEPGRAM SPEECH STARTED:', JSON.stringify(data, null, 2));
+        });
+
+        deepgramLive.on('speechEnded', (data) => {
+            console.log('🔇 DEEPGRAM SPEECH ENDED:', JSON.stringify(data, null, 2));
+        });
+
+        deepgramLive.on('metadata', (data) => {
+            console.log('📊 DEEPGRAM METADATA:', JSON.stringify(data, null, 2));
         });
 
         deepgramLive.on('error', (error) => {
