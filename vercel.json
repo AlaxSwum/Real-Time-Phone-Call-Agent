@@ -1,24 +1,34 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/server.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/server.js"
-    }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  },
   "functions": {
-    "api/server.js": {
+    "api/webhook.js": {
       "maxDuration": 30
     }
   },
-  "public": true
+  "rewrites": [
+    {
+      "source": "/voice",
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/webhook/voice", 
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/webhook/recording",
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/debug",
+      "destination": "/api/webhook"
+    },
+    {
+      "source": "/twilio-config",
+      "destination": "/api/webhook"
+    }
+  ]
 } 
