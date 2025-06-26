@@ -1054,9 +1054,9 @@ function handleTwilioStreamConnection(ws, req) {
         console.log('AI Creating AssemblyAI real-time session...');
         console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
         try {
-            // Create WebSocket connection to AssemblyAI real-time service with OPTIMAL phone call settings
+            // Create WebSocket connection to AssemblyAI real-time service with FIXED authentication
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&encoding=pcm_mulaw&disable_partial_transcripts=false&speech_threshold=0.2&silence_threshold=300&word_boost=["meeting","arrange","schedule","email","gmail","outlook","yahoo","hotmail","appointment","consultation","discuss","conference","call","phone"]', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 },
@@ -1290,7 +1290,7 @@ function handleTwilioStreamConnection(ws, req) {
                 console.log('SOCKET Enhanced AssemblyAI WebSocket closed for call:', callSid);
                 console.log('DEBUG Enhanced close code:', code, 'Reason:', reason.toString());
                 
-                // Enhanced close code handling
+                // Enhanced close code handling with more specific errors
                 let closeMessage = '';
                 switch (code) {
                     case 1000:
@@ -1310,8 +1310,25 @@ function handleTwilioStreamConnection(ws, req) {
                     case 1011:
                         closeMessage = 'Server error';
                         break;
+                    case 4101:
+                        closeMessage = 'AUTHENTICATION ERROR - Invalid API key or quota exceeded';
+                        console.error('❌ CRITICAL: AssemblyAI API key is invalid or quota exceeded');
+                        console.error('🔑 API Key provided:', process.env.ASSEMBLYAI_API_KEY ? 'YES (length: ' + process.env.ASSEMBLYAI_API_KEY.length + ')' : 'NO');
+                        console.error('💡 Solution: Check your AssemblyAI account at https://www.assemblyai.com/app');
+                        break;
+                    case 4102:
+                        closeMessage = 'RATE LIMIT ERROR - Too many requests';
+                        console.error('❌ CRITICAL: AssemblyAI rate limit exceeded');
+                        break;
+                    case 4103:
+                        closeMessage = 'CONFIGURATION ERROR - Invalid parameters';
+                        console.error('❌ CRITICAL: Invalid AssemblyAI configuration parameters');
+                        break;
                     default:
                         closeMessage = `Unknown close code: ${code}`;
+                        if (code >= 4000) {
+                            console.error('❌ CRITICAL: AssemblyAI specific error code:', code);
+                        }
                 }
                 
                 console.log(`DEBUG Enhanced close analysis: ${closeMessage}`);
@@ -2373,16 +2390,36 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         console.log('⏱️ Waited 2 seconds for recording to be ready...');
         
-        // Create proper basic auth header
-        const authString = `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`;
-        const authHeader = 'Basic ' + Buffer.from(authString).toString('base64');
-        console.log('🔑 Auth header length:', authHeader.length);
+        // Enhanced Twilio authentication with better error handling
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
         
-        const response = await fetch(url, {
+        console.log('🔑 Account SID check:', accountSid ? `${accountSid.substring(0, 10)}...` : 'MISSING');
+        console.log('🔑 Auth Token check:', authToken ? `${authToken.substring(0, 10)}...` : 'MISSING');
+        
+        if (!accountSid || !authToken) {
+            throw new Error('Missing Twilio credentials - check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN');
+        }
+        
+        // Create proper basic auth header
+        const authString = `${accountSid}:${authToken}`;
+        const authHeader = 'Basic ' + Buffer.from(authString).toString('base64');
+        console.log('🔑 Auth header created, length:', authHeader.length);
+        
+        // Use Twilio's direct media URL format if needed
+        let downloadUrl = url;
+        if (url.includes('api.twilio.com') || url.includes('api.dublin.ie1.twilio.com')) {
+            // Add .wav extension for better compatibility
+            downloadUrl = url + '.wav';
+            console.log('🔗 Using enhanced download URL:', downloadUrl);
+        }
+        
+        const response = await fetch(downloadUrl, {
             headers: {
                 'Authorization': authHeader,
                 'User-Agent': 'Real-Time-Call-Processor/1.0',
-                'Accept': 'audio/*'
+                'Accept': 'audio/wav, audio/mpeg, audio/*',
+                'Content-Type': 'application/json'
             }
         });
         
