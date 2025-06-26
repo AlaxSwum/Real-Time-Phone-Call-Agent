@@ -12,6 +12,9 @@ const OpenAI = require('openai');
 // Deepgram for real-time transcription
 const { createClient } = require('@deepgram/sdk');
 
+// AssemblyAI for real-time transcription (alternative)
+const { RealtimeTranscriber } = require('assemblyai');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -1007,10 +1010,11 @@ async function handleTwilioStreamConnection(ws, req) {
     // Initialize variables for this stream
     let fullTranscript = '';
     
-    // Use Deepgram for real-time transcription service
+    // Use HTTP-only transcription (skip problematic WebSocket)
     if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
-        console.log('🎙️ Using Deepgram for real-time transcription service...');
-        await initializeDeepgramRealtime(callSid, ws);
+        console.log('🎙️ Using HTTP-only transcription (bypassing WebSocket issues)...');
+        console.log('🔄 Initializing direct HTTP chunked processing...');
+        initializeHttpChunkedProcessing(callSid, ws);
     } else {
         console.log('❌ WARNING: No Deepgram API key configured');
         broadcastToClients({
