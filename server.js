@@ -2722,21 +2722,13 @@ function initializeDeepgramRealtime(callSid, ws) {
     }
     
     try {
-        // Create Deepgram live connection with UK-optimized phone call config
-        console.log('🔗 Creating Deepgram connection with UK phone-optimized config...');
+        // Create Deepgram live connection with MINIMAL config for debugging
+        console.log('🔗 Creating Deepgram connection with MINIMAL config for debugging...');
         const deepgramLive = deepgram.listen.live({
             model: 'nova-2',
-            language: 'en-GB', // UK English for better accuracy
-            smart_format: true,
-            interim_results: true,
-            utterance_end_ms: 1000,
-            vad_events: true,
-            punctuate: true,
+            language: 'en',
             sample_rate: 8000,
-            channels: 1,
-            encoding: 'mulaw',
-            filler_words: false,
-            no_delay: true
+            encoding: 'mulaw'
         });
 
         let isConnected = false;
@@ -2785,6 +2777,15 @@ function initializeDeepgramRealtime(callSid, ws) {
             
             // Test connection with a small audio packet
             console.log('🧪 DEEPGRAM: Testing connection with initial audio...');
+            
+            // Send a test audio packet to verify the connection works
+            const testAudio = Buffer.alloc(160, 127); // Silent mulaw audio
+            try {
+                deepgramLive.send(testAudio);
+                console.log('✅ DEEPGRAM: Test audio packet sent successfully');
+            } catch (testError) {
+                console.error('❌ DEEPGRAM: Failed to send test audio:', testError);
+            }
             
             // Broadcast connection success
             broadcastToClients({
@@ -2875,6 +2876,7 @@ function initializeDeepgramRealtime(callSid, ws) {
             }
         });
 
+        // Add listeners for ALL possible Deepgram events
         deepgramLive.on('utteranceEnd', (data) => {
             console.log('🗣️ DEEPGRAM UTTERANCE END:', JSON.stringify(data, null, 2));
         });
@@ -2889,6 +2891,19 @@ function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('metadata', (data) => {
             console.log('📊 DEEPGRAM METADATA:', JSON.stringify(data, null, 2));
+        });
+
+        deepgramLive.on('warning', (data) => {
+            console.log('⚠️ DEEPGRAM WARNING:', JSON.stringify(data, null, 2));
+        });
+
+        deepgramLive.on('finalize', (data) => {
+            console.log('🏁 DEEPGRAM FINALIZE:', JSON.stringify(data, null, 2));
+        });
+
+        // Catch any other events
+        deepgramLive.on('message', (data) => {
+            console.log('📨 DEEPGRAM MESSAGE:', JSON.stringify(data, null, 2));
         });
 
         deepgramLive.on('error', (error) => {
@@ -2925,7 +2940,7 @@ function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('close', () => {
             console.log('🔒 DEEPGRAM CONNECTION CLOSED for call:', callSid);
-            console.log(`📊 DEEPGRAM STATS: ${resultsReceived} results received, ${mediaPacketCount} packets sent`);
+            console.log(`📊 DEEPGRAM STATS: ${resultsReceived} results received, packets should be >0 if audio was sent`);
             isConnected = false;
             clearInterval(resultsChecker);
             
