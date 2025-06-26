@@ -1058,11 +1058,8 @@ function handleTwilioStreamConnection(ws, req) {
     let messageCount = 0;
     let transcriptTimeout = null;
     
-    // Use Deepgram as primary real-time transcription service
-    if (process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c') {
-        console.log('🎙️ Using Deepgram as primary real-time transcription service...');
-        initializeDeepgramRealtime(callSid, ws);
-    } else if (process.env.ASSEMBLYAI_API_KEY) {
+    // Use AssemblyAI as primary real-time transcription service for better accuracy
+    if (process.env.ASSEMBLYAI_API_KEY) {
         console.log('AI Creating AssemblyAI real-time session...');
         console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
         try {
@@ -1094,7 +1091,7 @@ function handleTwilioStreamConnection(ws, req) {
                 try {
                     const sessionConfig = {
                         sample_rate: 8000,
-                        encoding: "pcm_mulaw",
+                        encoding: "pcm_s16le", // Use standard PCM encoding for better compatibility
                         word_boost: [
                             // Meeting related
                             "meeting", "arrange", "schedule", "appointment", "consultation", "discuss", "conference",
@@ -1112,8 +1109,10 @@ function handleTwilioStreamConnection(ws, req) {
                         speaker_labels: false, // Disable for single speaker optimization
                         filter_profanity: false,
                         redact_pii: false,
-                        speech_threshold: 0.2,
-                        silence_threshold: 300
+                        speech_threshold: 0.1, // Lower threshold for better speech detection
+                        silence_threshold: 500, // Increased to reduce false positives
+                        auto_highlights: false, // Disable for better performance
+                        disfluencies: false // Remove ums, ahs for cleaner output
                     };
                     assemblyAIWS.send(JSON.stringify(sessionConfig));
                     console.log('📤 Sent OPTIMAL phone call session configuration to AssemblyAI');
@@ -1157,9 +1156,9 @@ function handleTwilioStreamConnection(ws, req) {
                     } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
                          const isPartial = transcript.message_type === 'PartialTranscript';
                          
-                         // OPTIMIZED filtering for phone call transcription
-                         const minConfidence = 0.4; // Higher threshold for phone calls
-                         const minLength = 3; // Minimum meaningful length for phone calls
+                         // OPTIMIZED filtering for phone call transcription (reduced thresholds for better detection)
+                         const minConfidence = 0.2; // Lower threshold to capture more speech
+                         const minLength = 2; // Shorter minimum length to catch brief responses
                          
                          console.log(`📞 PHONE TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, words: ${transcript.words ? transcript.words.length : 0})`);
                          
@@ -1179,12 +1178,12 @@ function handleTwilioStreamConnection(ws, req) {
                          );
                          
                          if (hasValidText && hasGoodConfidence && !isLikelyHallucination) {
-                             console.log(`✅ VALID SPEECH: "${transcript.text}" (confidence: ${transcript.confidence})`);
+                             console.log(`✅ ASSEMBLYAI VALID SPEECH: "${transcript.text}" (confidence: ${transcript.confidence})`);
                             
                             if (transcriptTimeout) {
                                 clearInterval(transcriptTimeout);
                                 transcriptTimeout = null;
-                                console.log('SUCCESS Enhanced real-time transcription working successfully!');
+                                console.log('SUCCESS AssemblyAI real-time transcription working successfully!');
                             }
                             
                             // Add to full transcript only for final transcripts with good confidence
@@ -1405,11 +1404,21 @@ function handleTwilioStreamConnection(ws, req) {
             console.log('🔄 FALLBACK: Switching to Deepgram for real-time transcription...');
             initializeDeepgramRealtime(callSid, ws);
         }
-    } else {
-        console.log('WARNING NO ASSEMBLYAI API KEY - Trying Deepgram for real-time transcription');
-        
-        // Try Deepgram as primary option if no AssemblyAI key
+    } else if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
+        console.log('🔄 FALLBACK: Using Deepgram for real-time transcription (no AssemblyAI key)');
         initializeDeepgramRealtime(callSid, ws);
+    } else {
+        console.log('❌ WARNING: No transcription service available - neither AssemblyAI nor Deepgram configured');
+        broadcastToClients({
+            type: 'transcription_unavailable',
+            message: 'No real-time transcription available - will analyze recording after call',
+            data: {
+                callSid: callSid,
+                error: 'No API keys configured',
+                fallbackMethod: 'post_call_recording_analysis',
+                timestamp: new Date().toISOString()
+            }
+        });
     }
     
     let mediaPacketCount = 0;
@@ -1419,11 +1428,11 @@ function handleTwilioStreamConnection(ws, req) {
     let firstAudioSample = null;
     let audioVariationDetected = false;
     
-    // Delay audio forwarding to avoid TwiML voice pickup (reduced for bridge calls)
+    // Delay audio forwarding to avoid TwiML voice pickup (further reduced for faster detection)
     setTimeout(() => {
         twimlFinished = true;
         console.log('STREAM TwiML playback should be finished, starting audio capture...');
-    }, 1500); // Reduced timing for bridge call compatibility
+    }, 800); // Reduced timing for faster speech detection
     
     ws.on('message', (message) => {
         try {
@@ -1582,8 +1591,10 @@ function handleTwilioStreamConnection(ws, req) {
                                 assemblyAISocket.send(JSON.stringify(phoneOptimizedAudioMessage));
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (mulaw ${audioBuffer.length}→PCM ${pcmBuffer.length} bytes)`);
-                                    console.log('INTENT Enhanced audio format: mulaw→PCM converted, sample rate: 8000Hz, word boosted');
+                                    console.log(`SUCCESS ASSEMBLYAI: First audio packet sent (mulaw ${audioBuffer.length}→PCM ${pcmBuffer.length} bytes)`);
+                                    console.log('CONFIG AssemblyAI format: mulaw→PCM converted, sample rate: 8000Hz, word boosted');
+                                } else if (mediaPacketCount <= 5) {
+                                    console.log(`ASSEMBLYAI: Packet ${mediaPacketCount} sent (${audioBuffer.length}→${pcmBuffer.length} bytes)`);
                                 }
                                 
                                 // Enhanced monitoring every 300 packets (more frequent)
@@ -1711,6 +1722,37 @@ function handleTwilioStreamConnection(ws, req) {
         console.error('ERROR Stream WebSocket error:', error);
     });
 }
+
+// Test current transcription service priority
+app.get('/test/transcription-priority', (req, res) => {
+    const hasAssemblyAI = !!process.env.ASSEMBLYAI_API_KEY;
+    const hasDeepgram = !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey);
+    
+    let primaryService = 'none';
+    if (hasAssemblyAI) {
+        primaryService = 'AssemblyAI';
+    } else if (hasDeepgram) {
+        primaryService = 'Deepgram';
+    }
+    
+    res.json({
+        primary_service: primaryService,
+        services_available: {
+            assemblyai: hasAssemblyAI,
+            deepgram: hasDeepgram
+        },
+        api_keys: {
+            assemblyai_configured: hasAssemblyAI,
+            assemblyai_length: process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0,
+            deepgram_configured: hasDeepgram,
+            deepgram_is_hardcoded: !!deepgramApiKey
+        },
+        recommendation: hasAssemblyAI ? 
+            'AssemblyAI will be used for real-time transcription' : 
+            'Configure ASSEMBLYAI_API_KEY for better accuracy',
+        timestamp: new Date().toISOString()
+    });
+});
 
 // Test AssemblyAI connection endpoint
 app.post('/test/assemblyai', async (req, res) => {
@@ -2488,13 +2530,13 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         const authHeader = 'Basic ' + Buffer.from(authString).toString('base64');
         console.log('🔑 Auth header created, length:', authHeader.length);
         
-        // Use Twilio's direct media URL format if needed
+        // Use Twilio's direct media URL format - try different approaches
         let downloadUrl = url;
-        if (url.includes('api.twilio.com') || url.includes('api.dublin.ie1.twilio.com')) {
-            // Add .wav extension for better compatibility
-            downloadUrl = url + '.wav';
-            console.log('🔗 Using enhanced download URL:', downloadUrl);
-        }
+        
+        // Try the original URL first, then with .wav extension
+        console.log('🔗 Trying original download URL:', url);
+        
+        let audioBuffer;
         
         const response = await fetch(downloadUrl, {
             headers: {
@@ -2508,19 +2550,42 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         console.log(`📡 Recording download response: ${response.status} ${response.statusText}`);
         
         if (!response.ok) {
-            if (response.status === 401) {
-                throw new Error(`Authentication failed - check Twilio credentials (${response.status})`);
-            } else if (response.status === 403) {
-                throw new Error(`Access forbidden - check Twilio permissions (${response.status})`);
-            } else if (response.status === 404) {
-                throw new Error(`Recording not found - it may not be ready yet (${response.status})`);
+            // Try alternative URL formats if first attempt fails
+            if (response.status === 401 && !downloadUrl.endsWith('.wav')) {
+                console.log('🔄 Retrying with .wav extension...');
+                downloadUrl = url + '.wav';
+                
+                const retryResponse = await fetch(downloadUrl, {
+                    headers: {
+                        'Authorization': authHeader,
+                        'User-Agent': 'Real-Time-Call-Processor/1.0',
+                        'Accept': 'audio/wav, audio/mpeg, audio/*',
+                    }
+                });
+                
+                if (!retryResponse.ok) {
+                    console.log(`❌ Retry also failed: ${retryResponse.status} ${retryResponse.statusText}`);
+                    throw new Error(`Recording download failed even with retry: ${retryResponse.status} ${retryResponse.statusText}`);
+                }
+                
+                console.log('✅ Retry with .wav extension successful');
+                audioBuffer = await retryResponse.buffer();
+                console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio (retry successful)`);
             } else {
-                throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
+                if (response.status === 401) {
+                    throw new Error(`Authentication failed - check Twilio credentials (${response.status})`);
+                } else if (response.status === 403) {
+                    throw new Error(`Access forbidden - check Twilio permissions (${response.status})`);
+                } else if (response.status === 404) {
+                    throw new Error(`Recording not found - it may not be ready yet (${response.status})`);
+                } else {
+                    throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
+                }
             }
+        } else {
+            audioBuffer = await response.buffer();
+            console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio`);
         }
-        
-        const audioBuffer = await response.buffer();
-        console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio`);
         
         // Upload to AssemblyAI for transcription
         console.log('📤 Uploading to AssemblyAI for transcription...');
