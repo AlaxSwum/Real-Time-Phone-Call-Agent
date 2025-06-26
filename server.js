@@ -144,24 +144,25 @@ async function detectAndProcessIntent(text, callSid) {
     console.log('📧 Email extraction result:', extractedEmail || 'No email found');
     console.log('📅 Meeting details:', meetingDetails);
     
-    // Meeting intent detection with speech-to-text error handling
+    // Enhanced meeting intent detection with better keyword matching
     const meetingKeywords = [
+        // Exact phrases
         'arrange a meeting',
-        'set up a meeting',
+        'set up a meeting', 
         'schedule a meeting',
         'schedule meeting',
         'have a meeting',
         'going to have a meeting',
         'would like to schedule',
         'want to schedule',
-        'like to schedule',        // Added this common pattern
+        'like to schedule',
         'arrange a medium',        // Speech-to-text error
         'set up a medium',         // Speech-to-text error
         'schedule a medium',       // Speech-to-text error
         'meeting on',
-        'meeting at',
+        'meeting at', 
         'meeting next',
-        'a meeting',               // Added simple pattern
+        'a meeting',
         'medium on',               // Speech-to-text error
         'medium at',               // Speech-to-text error
         'medium next',             // Speech-to-text error
@@ -171,14 +172,35 @@ async function detectAndProcessIntent(text, callSid) {
         'discuss',
         'catch up',
         'get together',
-        'resignation',             // Context-specific
-        'about my resignation'     // Context-specific
+        'resignation',
+        'about my resignation'
+    ];
+    
+    // Individual high-value keywords that should trigger meeting intent
+    const meetingIndividualKeywords = [
+        'arrange',
+        'schedule', 
+        'meeting',
+        'meet',
+        'discuss',
+        'appointment',
+        'consultation'
     ];
     
     console.log('🔍 Checking meeting keywords against transcript:', text);
     console.log('🔍 Lowercase text:', lowerText);
     
+    // Check exact phrase matches first
     const meetingMatch = meetingKeywords.some(keyword => {
+        const found = lowerText.includes(keyword);
+        if (found) {
+            console.log(`✅ Found meeting phrase: "${keyword}" in text: "${lowerText}"`);
+        }
+        return found;
+    });
+    
+    // Check individual keywords for partial matches
+    const individualMatch = meetingIndividualKeywords.some(keyword => {
         const found = lowerText.includes(keyword);
         if (found) {
             console.log(`✅ Found meeting keyword: "${keyword}" in text: "${lowerText}"`);
@@ -186,7 +208,8 @@ async function detectAndProcessIntent(text, callSid) {
         return found;
     });
     
-    console.log('🔍 Meeting keywords matched:', meetingMatch);
+    const finalMeetingMatch = meetingMatch || individualMatch;
+    console.log('🔍 Meeting keywords matched:', finalMeetingMatch);
     console.log('🔍 Full text being analyzed:', lowerText);
     
     // Support intent detection
@@ -198,13 +221,16 @@ async function detectAndProcessIntent(text, callSid) {
     const infoMatch = infoKeywords.some(keyword => lowerText.includes(keyword));
     
     // Determine primary intent with higher confidence for meetings
-    if (meetingMatch) {
+    if (finalMeetingMatch) {
         detectedIntent = 'meeting_discussion';
-        // Much higher confidence for any meeting mention
-        confidence = lowerText.includes('arrange') || 
-                    lowerText.includes('schedule') || 
-                    lowerText.includes('meeting') ? 
-                    0.95 : 0.85;
+        // Higher confidence for strong meeting indicators
+        if (meetingMatch) {
+            // Exact phrase match gets highest confidence
+            confidence = 0.95;
+        } else if (individualMatch) {
+            // Individual keyword match gets high confidence
+            confidence = 0.85;
+        }
     } else if (supportMatch) {
         detectedIntent = 'support_request';
         confidence = 0.75;
@@ -1028,13 +1054,15 @@ function handleTwilioStreamConnection(ws, req) {
         console.log('AI Creating AssemblyAI real-time session...');
         console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
         try {
-            // Create WebSocket connection to AssemblyAI real-time service optimized to catch every word
+            // Create WebSocket connection to AssemblyAI real-time service with OPTIMAL phone call settings
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&encoding=pcm_mulaw&disable_partial_transcripts=false&speech_threshold=0.2&silence_threshold=300&word_boost=["meeting","arrange","schedule","email","gmail","outlook","yahoo","hotmail","appointment","consultation","discuss","conference","call","phone"]', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY
                 },
-                handshakeTimeout: 15000
+                handshakeTimeout: 25000,
+                timeout: 60000,
+                perMessageDeflate: false
             });
             
             assemblyAISocket = assemblyAIWS;
@@ -1046,6 +1074,37 @@ function handleTwilioStreamConnection(ws, req) {
                 console.log('INTENT Optimized for maximum accuracy with word boost');
                 console.log('🔑 API Key status:', process.env.ASSEMBLYAI_API_KEY ? 'PROVIDED' : 'MISSING');
                 console.log('🔑 API Key length:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0);
+                
+                // Send OPTIMAL session configuration for phone call transcription
+                try {
+                    const sessionConfig = {
+                        sample_rate: 8000,
+                        encoding: "pcm_mulaw",
+                        word_boost: [
+                            // Meeting related
+                            "meeting", "arrange", "schedule", "appointment", "consultation", "discuss", "conference",
+                            // Email providers
+                            "email", "gmail", "outlook", "yahoo", "hotmail", "icloud", "protonmail",
+                            // Common business terms
+                            "call", "phone", "contact", "reach", "connect", "business", "work", "office",
+                            // Time references
+                            "monday", "tuesday", "wednesday", "thursday", "friday", "today", "tomorrow", "week",
+                            // Actions
+                            "send", "follow", "up", "callback", "return", "later"
+                        ],
+                        format_text: true,
+                        enable_extra_session_information: true,
+                        speaker_labels: false, // Disable for single speaker optimization
+                        filter_profanity: false,
+                        redact_pii: false,
+                        speech_threshold: 0.2,
+                        silence_threshold: 300
+                    };
+                    assemblyAIWS.send(JSON.stringify(sessionConfig));
+                    console.log('📤 Sent OPTIMAL phone call session configuration to AssemblyAI');
+                } catch (configError) {
+                    console.error('❌ Failed to send session config:', configError);
+                }
                 
                 // Broadcast connection success
                 broadcastToClients({
@@ -1081,25 +1140,39 @@ function handleTwilioStreamConnection(ws, req) {
                         });
                         
                     } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
-                         // Accept everything - no confidence filtering
                          const isPartial = transcript.message_type === 'PartialTranscript';
-                         const confidenceThreshold = 0; // Accept everything including 0 confidence
                          
-                         console.log(`🎯 TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, words: ${transcript.words ? transcript.words.length : 0})`);
+                         // OPTIMIZED filtering for phone call transcription
+                         const minConfidence = 0.4; // Higher threshold for phone calls
+                         const minLength = 3; // Minimum meaningful length for phone calls
                          
-                         // Log all transcripts, even empty ones, to see patterns
-                         if (transcript.text && transcript.text.trim().length > 0) {
-                             console.log(`🎉 DETECTED SPEECH: "${transcript.text}" (confidence: ${transcript.confidence})`);
+                         console.log(`📞 PHONE TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, words: ${transcript.words ? transcript.words.length : 0})`);
+                         
+                         // Enhanced validation for phone call quality
+                         const hasValidText = transcript.text && transcript.text.trim().length >= minLength;
+                         const hasGoodConfidence = transcript.confidence >= minConfidence;
+                         
+                         // Advanced hallucination detection for phone calls
+                         const isLikelyHallucination = transcript.text && (
+                             transcript.text.trim().length < 3 ||
+                             /^[a-z]{1,3}\.?$/i.test(transcript.text.trim()) || // Single letters
+                             /^(um|uh|ah|oh|mm|hmm)\.?$/i.test(transcript.text.trim()) || // Filler words
+                             /^[.,!?]+$/.test(transcript.text.trim()) || // Only punctuation
+                             transcript.confidence < 0.3 ||
+                             // Filter out common phone call artifacts
+                             /^(static|noise|beep|ring|dial|tone)\.?$/i.test(transcript.text.trim())
+                         );
+                         
+                         if (hasValidText && hasGoodConfidence && !isLikelyHallucination) {
+                             console.log(`✅ VALID SPEECH: "${transcript.text}" (confidence: ${transcript.confidence})`);
                             
                             if (transcriptTimeout) {
-                            clearInterval(transcriptTimeout);
-                            transcriptTimeout = null;
+                                clearInterval(transcriptTimeout);
+                                transcriptTimeout = null;
                                 console.log('SUCCESS Enhanced real-time transcription working successfully!');
                             }
                             
-                            console.log(`TRANSCRIPT: "${transcript.text}" (${transcript.message_type})`);
-                            
-                            // Add to full transcript only for final transcripts with any confidence
+                            // Add to full transcript only for final transcripts with good confidence
                             if (transcript.message_type === 'FinalTranscript') {
                                 fullTranscript += transcript.text + ' ';
                                 console.log(`SUCCESS Added to enhanced transcript: "${transcript.text}"`);
@@ -1119,7 +1192,7 @@ function handleTwilioStreamConnection(ws, req) {
                             });
                             
                             // If final transcript, analyze with OpenAI and detect intents
-                            if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 1) {
+                            if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 2) {
                                 console.log('🧠 Analyzing transcript for intents...');
                                 
                                 // Run all operations in parallel for faster processing
@@ -1149,10 +1222,14 @@ function handleTwilioStreamConnection(ws, req) {
                                     console.error('❌ Parallel processing error:', error);
                                 });
                             }
-                        } else if (transcript.confidence === 0) {
-                            console.log(`FILTERED: Empty/silent transcript (confidence 0)`);
-                                                 } else {
-                             console.log(`FILTERED: "${transcript.text}" (confidence ${transcript.confidence})`);
+                        } else {
+                            if (isLikelyHallucination) {
+                                console.log(`🚫 FILTERED HALLUCINATION: "${transcript.text}" (confidence: ${transcript.confidence})`);
+                            } else if (!hasGoodConfidence) {
+                                console.log(`🚫 FILTERED LOW CONFIDENCE: "${transcript.text}" (confidence: ${transcript.confidence})`);
+                            } else if (!hasValidText) {
+                                console.log(`🚫 FILTERED EMPTY/SHORT: "${transcript.text}"`);
+                            }
                          }
                         
                     } else if (transcript.message_type === 'SessionTerminated') {
@@ -1292,7 +1369,7 @@ function handleTwilioStreamConnection(ws, req) {
     setTimeout(() => {
         twimlFinished = true;
         console.log('STREAM TwiML playback should be finished, starting audio capture...');
-    }, 1500); // Reduced from 2500ms to 1500ms to catch more speech
+    }, 2000); // Optimized timing to avoid TwiML interference
     
     ws.on('message', (message) => {
         try {
@@ -1339,46 +1416,76 @@ function handleTwilioStreamConnection(ws, req) {
                             // Enhanced audio processing with quality optimization
                             const audioData = data.media.payload;
                             
-                            // Validate audio data quality
-                            if (audioData.length < 10) {
-                                console.log('FILTERED Skipping very small audio packet');
+                            // Enhanced audio validation to prevent garbage
+                            if (audioData.length < 20) {
+                                if (mediaPacketCount % 100 === 0) {
+                                    console.log('FILTERED Skipping very small audio packet:', audioData.length);
+                                }
                                 return;
                             }
                             
-                            // Send enhanced audio message to AssemblyAI only if connected
+                            // Additional validation: check for valid base64
+                            try {
+                                Buffer.from(audioData, 'base64');
+                            } catch (base64Error) {
+                                console.log('FILTERED Invalid base64 audio data');
+                                return;
+                            }
+                            
+                            // Send OPTIMIZED audio message to AssemblyAI for phone calls
                             if (assemblyAISocket.readyState === 1) {
-                                // AssemblyAI real-time needs PCM format, not raw mulaw
+                                // Enhanced mulaw audio processing for phone calls
                                 const audioBuffer = Buffer.from(audioData, 'base64');
                                 
-                                // Analyze audio content for debugging
+                                // Advanced audio quality analysis for phone calls
                                 if (mediaPacketCount === 1) {
                                     let nonZeroBytes = 0;
                                     let maxValue = 0;
+                                    let avgValue = 0;
+                                    let variation = 0;
+                                    
                                     for (let i = 0; i < Math.min(audioBuffer.length, 50); i++) {
-                                        if (audioBuffer[i] !== 0 && audioBuffer[i] !== 255) nonZeroBytes++;
+                                        if (audioBuffer[i] !== 0 && audioBuffer[i] !== 127 && audioBuffer[i] !== 255) nonZeroBytes++;
                                         maxValue = Math.max(maxValue, audioBuffer[i]);
+                                        avgValue += audioBuffer[i];
                                     }
-                                    console.log(`🔊 AUDIO ANALYSIS: ${nonZeroBytes}/50 non-zero bytes, max value: ${maxValue}`);
-                                    if (nonZeroBytes < 10) {
-                                        console.log(`⚠️ WARNING: Audio appears to be mostly silence`);
+                                    avgValue /= Math.min(audioBuffer.length, 50);
+                                    
+                                    // Calculate variation for voice detection
+                                    for (let i = 0; i < Math.min(audioBuffer.length, 50); i++) {
+                                        variation += Math.abs(audioBuffer[i] - avgValue);
+                                    }
+                                    variation /= Math.min(audioBuffer.length, 50);
+                                    
+                                    console.log(`🔊 PHONE AUDIO ANALYSIS: ${nonZeroBytes}/50 meaningful bytes, max: ${maxValue}, avg: ${avgValue.toFixed(1)}, variation: ${variation.toFixed(1)}`);
+                                    
+                                    if (nonZeroBytes < 15 || variation < 5) {
+                                        console.log(`⚠️ WARNING: Audio appears to be low quality or mostly silence`);
+                                    } else {
+                                        console.log(`✅ GOOD: Audio has sufficient variation for voice recognition`);
                                     }
                                 }
                                 
-                                // Convert mulaw to PCM for AssemblyAI compatibility
+                                // Enhanced mulaw to PCM conversion with phone call optimization
                                 const pcmBuffer = convertMulawToPcm(audioBuffer);
                                 const pcmBase64 = pcmBuffer.toString('base64');
                                 
-                                // Debug PCM conversion
+                                // Enhanced debugging for phone call audio
                                 if (mediaPacketCount === 1) {
-                                    console.log(`🔊 PCM CONVERSION: ${audioBuffer.length} mulaw bytes → ${pcmBuffer.length} PCM bytes`);
-                                    console.log(`🔊 PCM sample analysis: first 10 values: [${Array.from(pcmBuffer.slice(0, 20)).map((v, i) => i % 2 === 0 ? pcmBuffer.readInt16LE(i) : null).filter(v => v !== null).slice(0, 10).join(', ')}]`);
+                                    console.log(`🔊 PHONE PCM CONVERSION: ${audioBuffer.length} mulaw → ${pcmBuffer.length} PCM bytes`);
+                                    const samples = [];
+                                    for (let i = 0; i < Math.min(20, pcmBuffer.length); i += 2) {
+                                        samples.push(pcmBuffer.readInt16LE(i));
+                                    }
+                                    console.log(`🔊 PCM sample range: [${Math.min(...samples)} to ${Math.max(...samples)}]`);
                                 }
                                 
-                                const enhancedAudioMessage = {
+                                // Optimized audio message for phone call transcription
+                                const phoneOptimizedAudioMessage = {
                                     audio_data: pcmBase64
                                 };
                                 
-                                assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
+                                assemblyAISocket.send(JSON.stringify(phoneOptimizedAudioMessage));
                                 
                                 if (mediaPacketCount === 1) {
                                     console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (mulaw ${audioBuffer.length}→PCM ${pcmBuffer.length} bytes)`);
@@ -1908,12 +2015,15 @@ function extractMeetingDetails(transcript) {
 function getMatchedKeywords(lowerText, intent) {
     const keywordSets = {
         meeting_discussion: [
+            // Phrases
             'arrange a meeting', 'set up a meeting', 'schedule a meeting', 'schedule meeting',
             'have a meeting', 'going to have a meeting', 'would like to schedule', 'want to schedule',
             'arrange a medium', 'set up a medium', 'schedule a medium',
             'meeting on', 'meeting at', 'meeting next', 'medium on', 'medium at', 'medium next',
             'would like to meet', 'want to meet', 'let\'s meet', 'discuss', 'catch up', 'get together',
-            'resignation', 'about my resignation'
+            'resignation', 'about my resignation',
+            // Individual keywords
+            'arrange', 'schedule', 'meeting', 'meet', 'appointment', 'consultation'
         ],
         support_request: ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'],
         information_request: ['information', 'info', 'details', 'tell me', 'what is', 'how much', 'price'],
