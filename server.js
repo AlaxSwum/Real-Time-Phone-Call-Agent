@@ -21,7 +21,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
 // Initialize Deepgram client for real-time transcription
-const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c';
+const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '7fba0511f54adc490a379bd27cf84720b71ae433';
 console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
 const deepgram = createClient(deepgramApiKey);
 
