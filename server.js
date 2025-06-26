@@ -1693,7 +1693,7 @@ app.get('/debug', (req, res) => {
             '/webhook/voice',
             '/webhook/recording'
         ],
-        deployment_version: 'DEEPGRAM-OPTIMIZED-V2', // Deepgram-only transcription
+        deployment_version: 'PHONE-OPTIMIZED-V3', // Phone-optimized Deepgram with audio analysis
         headers: req.headers,
         url: req.url,
         method: req.method,
