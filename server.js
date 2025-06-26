@@ -1026,7 +1026,7 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service optimized to catch every word
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&encoding=pcm_mulaw&disable_partial_transcripts=false&speech_threshold=0.1&silence_threshold=200&boost_param=high_accuracy&auto_highlights=false&filter_profanity=false&language_code=en_us&punctuate=true&format_text=true&dual_channel=false&speaker_labels=false&entity_detection=false&sentiment_analysis=false&iab_categories=false&content_safety=false&redact_pii=false', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
                 headers: {
                     'Authorization': process.env.ASSEMBLYAI_API_KEY,
                     'User-Agent': 'Real-Time-Call-Processor/1.0'
@@ -1042,20 +1042,6 @@ function handleTwilioStreamConnection(ws, req) {
             assemblyAIWS.on('open', () => {
                 console.log('SUCCESS ASSEMBLYAI REAL-TIME CONNECTED for call:', callSid);
                 console.log('INTENT Optimized for maximum accuracy and reliability');
-                
-                // Send optimized configuration message to catch every word
-                const configMessage = {
-                    sample_rate: 8000,
-                    encoding: 'pcm_mulaw',
-                    disable_partial_transcripts: false,
-                    speech_threshold: 0.1,
-                    silence_threshold: 200,
-                    boost_param: 'high_accuracy',
-                    punctuate: true,
-                    format_text: true
-                };
-                
-                console.log('SEND Sending enhanced configuration to AssemblyAI:', configMessage);
                 
                 // Broadcast connection success
                 broadcastToClients({
@@ -1354,10 +1340,7 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             // Send enhanced audio message to AssemblyAI
                             const enhancedAudioMessage = {
-                                audio_data: audioData,
-                                // Additional metadata for enhanced processing
-                                timestamp: Date.now(),
-                                sequence: data.media.sequence
+                                audio_data: audioData
                             };
                             
                             assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
@@ -1611,40 +1594,152 @@ function extractEmailFromTranscript(transcript) {
         return validateAndCleanEmail(spelledEmail);
     }
     
-    // Try spoken email pattern with common speech-to-text errors
+    // Enhanced spoken email pattern with comprehensive speech-to-text error corrections
     let spokenPattern = text
         .replace(/\s+at\s+/gi, '@')
         .replace(/\s+dot\s+/gi, '.')
         .replace(/\s+dash\s+/gi, '-')
         .replace(/\s+underscore\s+/gi, '_')
-        // Common speech-to-text errors
-        .replace(/\s+token\s*/gi, '.com')        // "token" → ".com"
-        .replace(/\s+talking\s*/gi, '.com')      // "talking" → ".com"
-        .replace(/\s+common\s*/gi, '.com')       // "common" → ".com"
-        .replace(/\s+calm\s*/gi, '.com')         // "calm" → ".com"
-        .replace(/gmail\s+token/gi, 'gmail.com') // "gmail token" → "gmail.com"
-        .replace(/gmail\s+talking/gi, 'gmail.com')
-        .replace(/gmail\s+common/gi, 'gmail.com')
-        .replace(/gmail\s+calm/gi, 'gmail.com')
-        .replace(/\s+gmail\s+/gi, '@gmail.')     // Better gmail handling
-        .replace(/\s+outlook\s+/gi, '@outlook.') // Better outlook handling
-        .replace(/\s+yahoo\s+/gi, '@yahoo.')     // Better yahoo handling
-        .replace(/\s+hotmail\s+/gi, '@hotmail.'); // Better hotmail handling
+        .replace(/\s+hyphen\s+/gi, '-')
+        .replace(/\s+minus\s+/gi, '-')
+        .replace(/\s+period\s+/gi, '.')
+        .replace(/\s+point\s+/gi, '.')
+        
+        // Common speech-to-text errors for domain endings
+        .replace(/\s+token\s*/gi, '.com')           // "token" → ".com"
+        .replace(/\s+talking\s*/gi, '.com')         // "talking" → ".com"
+        .replace(/\s+common\s*/gi, '.com')          // "common" → ".com"
+        .replace(/\s+calm\s*/gi, '.com')            // "calm" → ".com"
+        .replace(/\s+come\s*/gi, '.com')            // "come" → ".com"
+        .replace(/\s+coming\s*/gi, '.com')          // "coming" → ".com"
+        .replace(/\s+column\s*/gi, '.com')          // "column" → ".com"
+        .replace(/\s+commercial\s*/gi, '.com')      // "commercial" → ".com"
+        .replace(/\s+commerce\s*/gi, '.com')        // "commerce" → ".com"
+        .replace(/\s+compact\s*/gi, '.com')         // "compact" → ".com"
+        .replace(/\s+company\s*/gi, '.com')         // "company" → ".com"
+        .replace(/\s+complete\s*/gi, '.com')        // "complete" → ".com"
+        
+        // Email provider corrections with speech-to-text errors
+        .replace(/gmail\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'gmail.com')
+        .replace(/g\s*mail\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'gmail.com')
+        .replace(/jemail\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'gmail.com')
+        .replace(/gmail\s+dot\s+com/gi, 'gmail.com')
+        .replace(/g\s*mail\s+dot\s+com/gi, 'gmail.com')
+        .replace(/jemail\s+dot\s+com/gi, 'gmail.com')
+        .replace(/\s+gmail\s+/gi, '@gmail.')         // Better gmail handling
+        .replace(/\s+g\s*mail\s+/gi, '@gmail.')      // "g mail" → "@gmail."
+        .replace(/\s+jemail\s+/gi, '@gmail.')        // "jemail" → "@gmail."
+        
+        .replace(/outlook\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'outlook.com')
+        .replace(/out\s*look\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'outlook.com')
+        .replace(/\s+outlook\s+/gi, '@outlook.')     // Better outlook handling
+        .replace(/\s+out\s*look\s+/gi, '@outlook.')  // "out look" → "@outlook."
+        
+        .replace(/yahoo\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'yahoo.com')
+        .replace(/ya\s*hoo\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'yahoo.com')
+        .replace(/\s+yahoo\s+/gi, '@yahoo.')         // Better yahoo handling
+        .replace(/\s+ya\s*hoo\s+/gi, '@yahoo.')      // "ya hoo" → "@yahoo."
+        
+        .replace(/hotmail\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'hotmail.com')
+        .replace(/hot\s*mail\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi, 'hotmail.com')
+        .replace(/\s+hotmail\s+/gi, '@hotmail.')     // Better hotmail handling
+        .replace(/\s+hot\s*mail\s+/gi, '@hotmail.')  // "hot mail" → "@hotmail."
+        
+        // Handle other common providers
+        .replace(/\s+icloud\s+/gi, '@icloud.')
+        .replace(/\s+i\s*cloud\s+/gi, '@icloud.')
+        .replace(/\s+protonmail\s+/gi, '@protonmail.')
+        .replace(/\s+proton\s*mail\s+/gi, '@protonmail.')
+        
+        // Handle org, net, edu endings
+        .replace(/\s+org\s*/gi, '.org')
+        .replace(/\s+organization\s*/gi, '.org')
+        .replace(/\s+net\s*/gi, '.net')
+        .replace(/\s+network\s*/gi, '.net')
+        .replace(/\s+edu\s*/gi, '.edu')
+        .replace(/\s+education\s*/gi, '.edu');
     
     const spokenEmail = spokenPattern.match(normalEmailRegex);
     if (spokenEmail && spokenEmail[0]) {
         return validateAndCleanEmail(spokenEmail[0]);
     }
     
-    // Try to extract from patterns like "lx at gmail token"
-    const simpleEmailPattern = /([a-zA-Z0-9._-]+)\s+at\s+(gmail|outlook|yahoo|hotmail)\s+(token|talking|common|calm|com)/gi;
-    const simpleMatch = text.match(simpleEmailPattern);
-    if (simpleMatch) {
-        const cleaned = simpleMatch[0]
-            .replace(/\s+at\s+/gi, '@')
-            .replace(/\s+(token|talking|common|calm)\s*/gi, '.com')
-            .replace(/\s+/g, '');
-        return validateAndCleanEmail(cleaned);
+    // Enhanced pattern for various speech formats
+    const enhancedEmailPatterns = [
+        // "alex at gmail token" format
+        /([a-zA-Z0-9._-]+)\s+at\s+(gmail|g\s*mail|jemail|outlook|out\s*look|yahoo|ya\s*hoo|hotmail|hot\s*mail|icloud|i\s*cloud)\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete|dot\s+com)/gi,
+        
+        // "alex at gmail dot com" format
+        /([a-zA-Z0-9._-]+)\s+at\s+(gmail|g\s*mail|jemail|outlook|out\s*look|yahoo|ya\s*hoo|hotmail|hot\s*mail|icloud|i\s*cloud)\s+dot\s+(com|org|net|edu)/gi,
+        
+        // "alex gmail token" format (missing "at")
+        /([a-zA-Z0-9._-]+)\s+(gmail|g\s*mail|jemail|outlook|out\s*look|yahoo|ya\s*hoo|hotmail|hot\s*mail|icloud|i\s*cloud)\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)/gi,
+        
+        // Context-aware patterns (looking for email keywords nearby)
+        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+|reach\s+me\s+at\s+)([a-zA-Z0-9._-]+)\s+at\s+([a-zA-Z0-9.-]+)\s+(token|talking|common|calm|come|coming|dot\s+com)/gi
+    ];
+    
+    for (const pattern of enhancedEmailPatterns) {
+        const matches = text.match(pattern);
+        if (matches) {
+            for (const match of matches) {
+                let cleaned = match
+                    .replace(/^(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+|reach\s+me\s+at\s+)/gi, '')
+                    .replace(/\s+at\s+/gi, '@')
+                    .replace(/\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)\s*/gi, '.com')
+                    .replace(/\s+dot\s+(com|org|net|edu)/gi, '.$1')
+                    .replace(/g\s*mail/gi, 'gmail')
+                    .replace(/jemail/gi, 'gmail')
+                    .replace(/out\s*look/gi, 'outlook')
+                    .replace(/ya\s*hoo/gi, 'yahoo')
+                    .replace(/hot\s*mail/gi, 'hotmail')
+                    .replace(/i\s*cloud/gi, 'icloud')
+                    .replace(/proton\s*mail/gi, 'protonmail')
+                    .replace(/\s+/g, '');
+                
+                const validatedEmail = validateAndCleanEmail(cleaned);
+                if (validatedEmail) {
+                    return validatedEmail;
+                }
+            }
+        }
+    }
+    
+    // Final attempt: Look for partial email patterns and try to complete them
+    const partialPatterns = [
+        // Find something like "alex gmail" and assume it's "alex@gmail.com"
+        /([a-zA-Z0-9._-]{2,})\s+(gmail|outlook|yahoo|hotmail|icloud)\b/gi,
+        // Find "my email alex" patterns
+        /(email\s+is\s+|my\s+email\s+)([a-zA-Z0-9._-]{2,})/gi
+    ];
+    
+    for (const pattern of partialPatterns) {
+        const matches = text.match(pattern);
+        if (matches) {
+            for (const match of matches) {
+                let processed = match
+                    .replace(/(email\s+is\s+|my\s+email\s+)/gi, '')
+                    .replace(/\s+/g, '');
+                
+                // If it looks like "alexgmail", try to split it
+                if (processed.includes('gmail') && !processed.includes('@')) {
+                    processed = processed.replace('gmail', '@gmail.com');
+                } else if (processed.includes('outlook') && !processed.includes('@')) {
+                    processed = processed.replace('outlook', '@outlook.com');
+                } else if (processed.includes('yahoo') && !processed.includes('@')) {
+                    processed = processed.replace('yahoo', '@yahoo.com');
+                } else if (processed.includes('hotmail') && !processed.includes('@')) {
+                    processed = processed.replace('hotmail', '@hotmail.com');
+                } else if (processed.includes('icloud') && !processed.includes('@')) {
+                    processed = processed.replace('icloud', '@icloud.com');
+                }
+                
+                const validatedEmail = validateAndCleanEmail(processed);
+                if (validatedEmail) {
+                    return validatedEmail;
+                }
+            }
+        }
     }
     
     return null;
