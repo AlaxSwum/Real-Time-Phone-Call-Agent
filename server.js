@@ -2340,20 +2340,15 @@ async function initializeDeepgramRealtime(callSid, ws) {
         console.log('🔗 Creating Deepgram WebSocket connection...');
         console.log('🔧 TESTING: mulaw → linear16 with 8kHz → 16kHz upsampling...');
         console.log('🎯 MODEL: Using enhanced-general model for better compatibility...');
-        // Use PHONE-OPTIMIZED configuration for better bridge call compatibility
-        console.log('🔧 PHONE-OPTIMIZED CONFIG: Enhanced settings for bridge calls...');
+        // Use MINIMAL WORKING configuration to test basic functionality
+        console.log('🔧 MINIMAL CONFIG: Using simplest possible configuration to test...');
         const deepgramLive = deepgram.listen.live({
-            model: 'nova-2-phonecall',  // Phone call optimized model
-            language: 'en-US',
+            model: 'nova-2',
+            language: 'en',
             sample_rate: 8000,
             encoding: 'mulaw',
             channels: 1,
-            interim_results: true,
-            smart_format: true,         // Better formatting for phone calls
-            punctuate: true,           // Add punctuation
-            vad_events: true,          // Voice activity detection events
-            endpointing: 300,          // Wait 300ms before finalizing
-            utterance_end_ms: 1000     // End utterance after 1 second of silence
+            interim_results: true
         });
 
         let isConnected = false;
@@ -2403,10 +2398,10 @@ async function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
-            console.log('🔧 DEEPGRAM CONFIG: nova-2-phonecall model, en-US language, mulaw encoding, 8kHz sample rate');
+            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en language, mulaw encoding, 8kHz sample rate');
             console.log('🎯 RAW MULAW: Sending original Twilio audio format directly');
-            console.log('📊 INTERIM RESULTS: Enabled with VAD events and smart formatting');
-            console.log('🌍 DEEPGRAM PHONE: Optimized specifically for phone call transcription');
+            console.log('📊 INTERIM RESULTS: Enabled for basic transcription testing');
+            console.log('🌍 DEEPGRAM MINIMAL: Simplest configuration to verify functionality');
             isConnected = true;
             clearTimeout(connectionTimeout);
             
@@ -2426,6 +2421,17 @@ async function initializeDeepgramRealtime(callSid, ws) {
                 }
                 deepgramLive.send(testAudio2);
                 console.log('✅ DEEPGRAM: Test audio with variation sent');
+                
+                // Set a timeout to check if Deepgram responds to test audio
+                setTimeout(() => {
+                    if (resultsReceived === 0) {
+                        console.log('⚠️ DEEPGRAM: No response to test audio after 5 seconds');
+                        console.log('🔍 POSSIBLE ISSUES:');
+                        console.log('  - Deepgram WebSocket not properly bidirectional');
+                        console.log('  - Model/configuration parameters invalid');
+                        console.log('  - API key permissions insufficient');
+                    }
+                }, 5000);
             } catch (testError) {
                 console.error('❌ DEEPGRAM: Failed to send test audio:', testError);
             }
@@ -2433,16 +2439,16 @@ async function initializeDeepgramRealtime(callSid, ws) {
             // Broadcast connection success
             broadcastToClients({
                 type: 'deepgram_connected',
-                message: 'Deepgram phone-optimized transcription ready (nova-2-phonecall with VAD)',
+                message: 'Deepgram enhanced transcription ready (nova-2 with audio monitoring)',
                 data: {
                     callSid: callSid,
                     provider: 'deepgram',
-                    model: 'nova-2-phonecall',
+                    model: 'nova-2',
                     encoding: 'mulaw',
                     audio_format: 'raw_mulaw_8khz',
                     sample_rate: 8000,
-                    features: ['vad_events', 'smart_format', 'punctuate'],
-                    optimization: 'phone_calls',
+                    features: ['vad_events', 'smart_format', 'punctuate', 'audio_analysis'],
+                    optimization: 'enhanced_monitoring',
                     timestamp: new Date().toISOString()
                 }
             });
