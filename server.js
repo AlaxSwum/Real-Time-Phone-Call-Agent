@@ -1500,11 +1500,13 @@ function handleTwilioStreamConnection(ws, req) {
                                          maxValue = Math.max(maxValue, audioData[i]);
                                      }
                                      console.log(`🔊 DEEPGRAM AUDIO ANALYSIS: ${nonZeroBytes}/50 meaningful bytes, max: ${maxValue}`);
+                                     console.log(`🧪 DEEPGRAM: Expecting results within 2-3 seconds...`);
                                  }
                                  
-                                 // Log progress every 300 packets
+                                 // Log progress every 300 packets and check for results
                                  if (mediaPacketCount % 300 === 0) {
                                      console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
+                                     console.log(`⚠️ DEEPGRAM DEBUG: If no results received yet, there may be a connection issue`);
                                  }
                              } else {
                                 // Buffer audio until connected
@@ -2250,7 +2252,7 @@ app.get('/debug', (req, res) => {
             '/webhook/voice',
             '/webhook/recording'
         ],
-        deployment_version: 'FIXED-ROUTING', // Route ordering fix
+        deployment_version: 'DEEPGRAM-OPTIMIZED-V2', // Deepgram-only transcription
         headers: req.headers,
         url: req.url,
         method: req.method,
@@ -2720,11 +2722,11 @@ function initializeDeepgramRealtime(callSid, ws) {
     }
     
     try {
-        // Create Deepgram live connection with optimized phone call config
-        console.log('🔗 Creating Deepgram connection with phone-optimized config...');
+        // Create Deepgram live connection with UK-optimized phone call config
+        console.log('🔗 Creating Deepgram connection with UK phone-optimized config...');
         const deepgramLive = deepgram.listen.live({
             model: 'nova-2',
-            language: 'en-US',
+            language: 'en-GB', // UK English for better accuracy
             smart_format: true,
             interim_results: true,
             utterance_end_ms: 1000,
@@ -2732,7 +2734,9 @@ function initializeDeepgramRealtime(callSid, ws) {
             punctuate: true,
             sample_rate: 8000,
             channels: 1,
-            encoding: 'mulaw'
+            encoding: 'mulaw',
+            filler_words: false,
+            no_delay: true
         });
 
         let isConnected = false;
@@ -2740,6 +2744,8 @@ function initializeDeepgramRealtime(callSid, ws) {
         let fullTranscript = '';
         let mediaPacketCount = 0;
         let twimlFinished = true; // Start immediately for Deepgram
+        let resultsReceived = 0;
+        let lastResultTime = Date.now();
 
         // Add connection timeout
         const connectionTimeout = setTimeout(() => {
@@ -2757,11 +2763,28 @@ function initializeDeepgramRealtime(callSid, ws) {
             }
         }, 10000);
 
+        // Add results timeout checker
+        const resultsChecker = setInterval(() => {
+            if (isConnected && mediaPacketCount > 100 && resultsReceived === 0) {
+                const timeSinceStart = Date.now() - lastResultTime;
+                console.error(`⚠️ DEEPGRAM RESULTS TIMEOUT: ${mediaPacketCount} packets sent, 0 results received after ${Math.round(timeSinceStart/1000)}s`);
+                console.error('🔍 POSSIBLE ISSUES:');
+                console.error('  - Audio format incompatibility (mulaw encoding)');
+                console.error('  - Deepgram API key permissions');
+                console.error('  - Network connectivity to Deepgram servers');
+                console.error('  - Audio quality too low for speech detection');
+            }
+        }, 5000);
+
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
-            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, mulaw encoding, 8kHz sample rate');
+            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en-GB language, mulaw encoding, 8kHz sample rate');
+            console.log('🌍 DEEPGRAM REGION: Optimized for UK phone calls');
             isConnected = true;
             clearTimeout(connectionTimeout);
+            
+            // Test connection with a small audio packet
+            console.log('🧪 DEEPGRAM: Testing connection with initial audio...');
             
             // Broadcast connection success
             broadcastToClients({
@@ -2785,8 +2808,13 @@ function initializeDeepgramRealtime(callSid, ws) {
             }
         });
 
+        // Add debugging for ALL Deepgram events
+        console.log('🔧 DEEPGRAM: Setting up event listeners...');
+        
         deepgramLive.on('results', (data) => {
-            console.log('📥 DEEPGRAM RAW RESULT received for call:', callSid);
+            resultsReceived++;
+            lastResultTime = Date.now();
+            console.log(`📥 DEEPGRAM RAW RESULT #${resultsReceived} received for call:`, callSid);
             console.log('🔍 DEEPGRAM RESULT TYPE:', data.type || 'unknown');
             console.log('📄 DEEPGRAM FULL RESULT:', JSON.stringify(data, null, 2));
             
@@ -2897,11 +2925,15 @@ function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('close', () => {
             console.log('🔒 DEEPGRAM CONNECTION CLOSED for call:', callSid);
+            console.log(`📊 DEEPGRAM STATS: ${resultsReceived} results received, ${mediaPacketCount} packets sent`);
             isConnected = false;
+            clearInterval(resultsChecker);
             
             // Log final transcript
             if (fullTranscript.trim()) {
                 console.log('📝 DEEPGRAM FULL TRANSCRIPT:', fullTranscript.trim());
+            } else {
+                console.log('⚠️ DEEPGRAM: No transcript generated - possible audio or configuration issue');
             }
         });
 
