@@ -1088,10 +1088,45 @@ async function handleTwilioStreamConnection(ws, req) {
                                 if (mediaPacketCount === 1) {
                                     console.log(`✅ DEEPGRAM WEBSOCKET: First mulaw packet sent (${mulawData.length} bytes)`);
                                     console.log(`🎯 USING RAW MULAW: No conversion for WebSocket mode`);
+                                    
+                                    // Analyze first audio packet for speech detection
+                                    let nonSilentBytes = 0;
+                                    let maxAmplitude = 0;
+                                    for (let i = 0; i < Math.min(mulawData.length, 50); i++) {
+                                        const sample = mulawData[i];
+                                        if (sample !== 0 && sample !== 127 && sample !== 255) nonSilentBytes++;
+                                        maxAmplitude = Math.max(maxAmplitude, Math.abs(sample - 127));
+                                    }
+                                    console.log(`🔊 AUDIO ANALYSIS: ${nonSilentBytes}/50 non-silent bytes, max amplitude: ${maxAmplitude}`);
+                                    
+                                    if (maxAmplitude < 5) {
+                                        console.log(`⚠️ WARNING: Audio appears to be very quiet or silent`);
+                                    } else if (maxAmplitude > 100) {
+                                        console.log(`✅ GOOD: Audio has strong signal levels`);
+                                    } else {
+                                        console.log(`📊 INFO: Audio has moderate signal levels`);
+                                    }
                                 }
                                 
                                 if (mediaPacketCount % 300 === 0) {
                                     console.log(`🎙️ DEEPGRAM WEBSOCKET: ${mediaPacketCount} mulaw packets sent`);
+                                    
+                                    // Analyze audio quality every 300 packets
+                                    let activeBytes = 0;
+                                    let totalAmplitude = 0;
+                                    for (let i = 0; i < Math.min(mulawData.length, 50); i++) {
+                                        const sample = mulawData[i];
+                                        const amplitude = Math.abs(sample - 127);
+                                        if (amplitude > 5) activeBytes++;
+                                        totalAmplitude += amplitude;
+                                    }
+                                    const avgAmplitude = totalAmplitude / Math.min(mulawData.length, 50);
+                                    
+                                    console.log(`🔊 AUDIO QUALITY: ${activeBytes}/50 active bytes, avg amplitude: ${avgAmplitude.toFixed(1)}`);
+                                    
+                                    if (avgAmplitude < 3) {
+                                        console.log(`⚠️ AUDIO ISSUE: Very low audio levels - may be silence or background noise only`);
+                                    }
                                 }
                             } else if (ws.chunkProcessor) {
                                 // HTTP chunked processing mode - convert to linear16
@@ -1867,7 +1902,7 @@ function handleVoiceWebhook(req, res) {
 <Response>
     <Say voice="alice">Connecting your call, please wait...</Say>
     <Start>
-        <Stream url="${streamUrl}" track="inbound_track" />
+        <Stream url="${streamUrl}" track="both_tracks" />
     </Start>
     <Dial 
         record="true" 
@@ -2305,15 +2340,20 @@ async function initializeDeepgramRealtime(callSid, ws) {
         console.log('🔗 Creating Deepgram WebSocket connection...');
         console.log('🔧 TESTING: mulaw → linear16 with 8kHz → 16kHz upsampling...');
         console.log('🎯 MODEL: Using enhanced-general model for better compatibility...');
-        // Use ORIGINAL 8kHz configuration since WebSocket is now working
-        console.log('🔧 REVERTING to 8kHz mulaw - WebSocket working but no results...');
+        // Use PHONE-OPTIMIZED configuration for better bridge call compatibility
+        console.log('🔧 PHONE-OPTIMIZED CONFIG: Enhanced settings for bridge calls...');
         const deepgramLive = deepgram.listen.live({
-            model: 'nova-2',
-            language: 'en',
-            sample_rate: 8000,  // Back to original Twilio sample rate
-            encoding: 'mulaw',  // Back to original Twilio encoding
+            model: 'nova-2-phonecall',  // Phone call optimized model
+            language: 'en-US',
+            sample_rate: 8000,
+            encoding: 'mulaw',
             channels: 1,
-            interim_results: true
+            interim_results: true,
+            smart_format: true,         // Better formatting for phone calls
+            punctuate: true,           // Add punctuation
+            vad_events: true,          // Voice activity detection events
+            endpointing: 300,          // Wait 300ms before finalizing
+            utterance_end_ms: 1000     // End utterance after 1 second of silence
         });
 
         let isConnected = false;
@@ -2340,25 +2380,33 @@ async function initializeDeepgramRealtime(callSid, ws) {
             }
         }, 10000);
 
-        // Add results timeout checker
+        // Add results timeout checker with more detailed diagnosis
         const resultsChecker = setInterval(() => {
             if (isConnected && mediaPacketCount > 100 && resultsReceived === 0) {
                 const timeSinceStart = Date.now() - lastResultTime;
                 console.error(`⚠️ DEEPGRAM RESULTS TIMEOUT: ${mediaPacketCount} packets sent, 0 results received after ${Math.round(timeSinceStart/1000)}s`);
-                console.error('🔍 POSSIBLE ISSUES:');
-                console.error('  - Audio format incompatibility (mulaw encoding)');
-                console.error('  - Deepgram API key permissions');
-                console.error('  - Network connectivity to Deepgram servers');
-                console.error('  - Audio quality too low for speech detection');
+                console.error('🔍 MOST LIKELY ISSUES FOR BRIDGE CALLS:');
+                console.error('  1. Audio contains only silence or background noise (no speech detected)');
+                console.error('  2. Bridge call audio quality too low for speech recognition');
+                console.error('  3. Twilio bridge audio routing issues');
+                console.error('  4. Deepgram mulaw format compatibility issues');
+                console.error('💡 SOLUTION: Check audio analysis logs above for signal levels');
+                
+                // Switch to HTTP fallback if no results after significant time
+                if (mediaPacketCount > 600 && resultsReceived === 0) {
+                    console.log('🔄 SWITCHING TO HTTP FALLBACK due to no WebSocket results...');
+                    clearInterval(resultsChecker);
+                    initializeHttpChunkedProcessing(callSid, ws);
+                }
             }
-        }, 5000);
+        }, 10000); // Check every 10 seconds
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
-            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en language, mulaw encoding, 8kHz sample rate');
+            console.log('🔧 DEEPGRAM CONFIG: nova-2-phonecall model, en-US language, mulaw encoding, 8kHz sample rate');
             console.log('🎯 RAW MULAW: Sending original Twilio audio format directly');
-            console.log('📊 INTERIM RESULTS: Enabled for real-time transcription');
-            console.log('🌍 DEEPGRAM REGION: Optimized for phone calls');
+            console.log('📊 INTERIM RESULTS: Enabled with VAD events and smart formatting');
+            console.log('🌍 DEEPGRAM PHONE: Optimized specifically for phone call transcription');
             isConnected = true;
             clearTimeout(connectionTimeout);
             
@@ -2370,6 +2418,14 @@ async function initializeDeepgramRealtime(callSid, ws) {
             try {
                 deepgramLive.send(testAudio);
                 console.log('✅ DEEPGRAM: Test audio packet sent successfully');
+                
+                // Send a second test with some variation to trigger processing
+                const testAudio2 = Buffer.alloc(160);
+                for (let i = 0; i < 160; i++) {
+                    testAudio2[i] = 127 + Math.sin(i * 0.1) * 50; // Generate some audio variation
+                }
+                deepgramLive.send(testAudio2);
+                console.log('✅ DEEPGRAM: Test audio with variation sent');
             } catch (testError) {
                 console.error('❌ DEEPGRAM: Failed to send test audio:', testError);
             }
@@ -2377,14 +2433,16 @@ async function initializeDeepgramRealtime(callSid, ws) {
             // Broadcast connection success
             broadcastToClients({
                 type: 'deepgram_connected',
-                message: 'Deepgram real-time transcription ready (nova-2 model with raw mulaw)',
+                message: 'Deepgram phone-optimized transcription ready (nova-2-phonecall with VAD)',
                 data: {
                     callSid: callSid,
                     provider: 'deepgram',
-                    model: 'nova-2',
+                    model: 'nova-2-phonecall',
                     encoding: 'mulaw',
                     audio_format: 'raw_mulaw_8khz',
                     sample_rate: 8000,
+                    features: ['vad_events', 'smart_format', 'punctuate'],
+                    optimization: 'phone_calls',
                     timestamp: new Date().toISOString()
                 }
             });
