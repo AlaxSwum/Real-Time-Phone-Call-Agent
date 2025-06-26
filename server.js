@@ -2136,17 +2136,15 @@ async function initializeDeepgramRealtime(callSid, ws) {
         console.log('🔗 Creating Deepgram WebSocket connection...');
         console.log('🔧 TESTING: mulaw → linear16 with 8kHz → 16kHz upsampling...');
         console.log('🎯 MODEL: Using enhanced-general model for better compatibility...');
+        // Try MINIMAL configuration to avoid WebSocket connection issues
+        console.log('🔧 USING MINIMAL CONFIG to troubleshoot WebSocket connection...');
         const deepgramLive = deepgram.listen.live({
-            model: 'enhanced-general',  // Changed from nova-2 for better compatibility
-            language: 'en-GB',
-            sample_rate: 16000,  // 16kHz with upsampling
+            model: 'nova-2',  // Back to nova-2 - more stable
+            language: 'en',   // Simplified language code
+            sample_rate: 16000,
             encoding: 'linear16',
-            channels: 1,
-            interim_results: true,
-            smart_format: true,
-            punctuate: true,
-            vad_events: true,
-            endpointing: 300  // 300ms silence before finalizing
+            channels: 1
+            // Removed all optional parameters that might cause WebSocket issues
         });
 
         let isConnected = false;
@@ -2336,19 +2334,26 @@ async function initializeDeepgramRealtime(callSid, ws) {
             console.error('❌ DEEPGRAM ERROR:', error);
             console.error('🔍 Error type:', typeof error);
             console.error('🔍 Error details:', error);
+            console.error('🔍 WebSocket URL that failed:', error.url || 'Unknown URL');
+            console.error('🔍 Ready State:', error.readyState || 'Unknown');
             
             let errorMessage = error.message || 'Unknown Deepgram error';
             let solution = 'Check logs for details';
             
             // Provide specific solutions for common errors
             if (error.message && error.message.includes('network error')) {
-                solution = 'Network connectivity issue - check internet connection';
+                solution = 'Network connectivity issue - possible firewall blocking WebSocket to api.deepgram.com';
             } else if (error.message && error.message.includes('401')) {
                 solution = 'Invalid API key - check DEEPGRAM_API_KEY environment variable';
             } else if (error.message && error.message.includes('403')) {
                 solution = 'Insufficient permissions - check Deepgram account settings';
             } else if (error.message && error.message.includes('non-101 status code')) {
-                solution = 'WebSocket handshake failed - API key or configuration issue';
+                solution = 'WebSocket handshake failed - possible network/proxy issue or Deepgram service problem';
+                console.error('🚨 WEBSOCKET HANDSHAKE FAILURE - This suggests:');
+                console.error('   1. Network/firewall blocking WebSocket connections to api.deepgram.com');
+                console.error('   2. Proxy server interfering with WebSocket upgrade');
+                console.error('   3. Deepgram service temporarily unavailable');
+                console.error('   4. Invalid WebSocket URL parameters');
             }
             
             broadcastToClients({
@@ -2358,6 +2363,8 @@ async function initializeDeepgramRealtime(callSid, ws) {
                     callSid: callSid,
                     error: errorMessage,
                     solution: solution,
+                    websocket_url: error.url || 'Unknown',
+                    ready_state: error.readyState || 'Unknown',
                     fallback: 'Call recording will be analyzed after completion',
                     timestamp: new Date().toISOString()
                 }
