@@ -47,6 +47,12 @@ console.log('🔍 Environment Variables Debug:');
 console.log('  - BRIDGE_TARGET_NUMBER:', process.env.BRIDGE_TARGET_NUMBER || 'NOT SET');
 console.log('  - NODE_ENV:', NODE_ENV);
 console.log('  - PORT:', PORT);
+console.log('🔍 All Environment Variables:');
+Object.keys(process.env).forEach(key => {
+    if (key.includes('BRIDGE') || key.includes('TWILIO') || key.includes('DEEPGRAM')) {
+        console.log(`  - ${key}: ${process.env[key] ? process.env[key].substring(0, 10) + '...' : 'NOT SET'}`);
+    }
+});
 
 // Security middleware for production
 if (NODE_ENV === 'production') {
@@ -1926,7 +1932,8 @@ function handleVoiceWebhook(req, res) {
     console.log(`🔗 Using WebSocket base URL: ${baseWsUrl}`);
     
     // Check if this is a bridge call (Person A calling to be connected to Person B)
-    const bridgeNumber = process.env.BRIDGE_TARGET_NUMBER; // Set this in your environment variables
+    const bridgeNumber = process.env.BRIDGE_TARGET_NUMBER || '+447494225623'; // Fallback to hardcoded number
+    console.log('🌉 Bridge number resolved to:', bridgeNumber);
     
     if (bridgeNumber) {
         console.log(`🌉 Bridge mode: Connecting ${From} to ${bridgeNumber}`);
