@@ -181,12 +181,13 @@ async function detectAndProcessIntent(text, callSid) {
     const meetingMatch = meetingKeywords.some(keyword => {
         const found = lowerText.includes(keyword);
         if (found) {
-            console.log(`✅ Found meeting keyword: "${keyword}"`);
+            console.log(`✅ Found meeting keyword: "${keyword}" in text: "${lowerText}"`);
         }
         return found;
     });
     
     console.log('🔍 Meeting keywords matched:', meetingMatch);
+    console.log('🔍 Full text being analyzed:', lowerText);
     
     // Support intent detection
     const supportKeywords = ['help', 'support', 'problem', 'issue', 'trouble', 'assistance'];
@@ -199,9 +200,10 @@ async function detectAndProcessIntent(text, callSid) {
     // Determine primary intent with higher confidence for meetings
     if (meetingMatch) {
         detectedIntent = 'meeting_discussion';
-        // Higher confidence for explicit meeting mentions
-        confidence = lowerText.includes('arrange a meeting') || 
-                    lowerText.includes('schedule a meeting') ? 
+        // Much higher confidence for any meeting mention
+        confidence = lowerText.includes('arrange') || 
+                    lowerText.includes('schedule') || 
+                    lowerText.includes('meeting') ? 
                     0.95 : 0.85;
     } else if (supportMatch) {
         detectedIntent = 'support_request';
@@ -1028,13 +1030,11 @@ function handleTwilioStreamConnection(ws, req) {
         try {
             // Create WebSocket connection to AssemblyAI real-time service optimized to catch every word
             const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
+            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&word_boost=%5B%22schedule%22,%22meeting%22,%22email%22,%22gmail%22%5D', {
                 headers: {
-                    'Authorization': process.env.ASSEMBLYAI_API_KEY,
-                    'User-Agent': 'Real-Time-Call-Processor/1.0'
+                    'Authorization': process.env.ASSEMBLYAI_API_KEY
                 },
-                handshakeTimeout: 10000,
-                perMessageDeflate: false
+                handshakeTimeout: 15000
             });
             
             assemblyAISocket = assemblyAIWS;
@@ -1043,7 +1043,9 @@ function handleTwilioStreamConnection(ws, req) {
             
             assemblyAIWS.on('open', () => {
                 console.log('SUCCESS ASSEMBLYAI REAL-TIME CONNECTED for call:', callSid);
-                console.log('INTENT Optimized for maximum accuracy and reliability');
+                console.log('INTENT Optimized for maximum accuracy with word boost');
+                console.log('🔑 API Key status:', process.env.ASSEMBLYAI_API_KEY ? 'PROVIDED' : 'MISSING');
+                console.log('🔑 API Key length:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0);
                 
                 // Broadcast connection success
                 broadcastToClients({
@@ -1052,7 +1054,7 @@ function handleTwilioStreamConnection(ws, req) {
                     data: {
                         callSid: callSid,
                         timestamp: new Date().toISOString(),
-                        configuration: 'enhanced_accuracy'
+                        configuration: 'enhanced_accuracy_word_boost'
                     }
                 });
             });
@@ -1079,9 +1081,9 @@ function handleTwilioStreamConnection(ws, req) {
                         });
                         
                     } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
-                         // Much lower confidence thresholds to catch all speech
+                         // Extremely low confidence thresholds to catch all speech
                          const isPartial = transcript.message_type === 'PartialTranscript';
-                         const confidenceThreshold = isPartial ? 0.05 : 0.1; // Very low thresholds to catch everything
+                         const confidenceThreshold = isPartial ? 0.01 : 0.01; // Almost accept everything
                          
                          console.log(`🎯 TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, threshold: ${confidenceThreshold})`);
                             
@@ -1348,25 +1350,21 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             // Send enhanced audio message to AssemblyAI only if connected
                             if (assemblyAISocket.readyState === 1) {
-                                // Convert mulaw to PCM for AssemblyAI compatibility
-                                const audioBuffer = Buffer.from(audioData, 'base64');
-                                const pcmBuffer = convertMulawToPcm(audioBuffer);
-                                const pcmBase64 = pcmBuffer.toString('base64');
-                                
+                                // Send raw mulaw audio data (revert PCM conversion test)
                                 const enhancedAudioMessage = {
-                                    audio_data: pcmBase64
+                                    audio_data: audioData
                                 };
                                 
                                 assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (converted mulaw→PCM: ${audioBuffer.length}→${pcmBuffer.length} bytes)`);
-                                    console.log('INTENT Enhanced audio format: PCM converted from mulaw, sample rate: 8000Hz');
+                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (${audioData.length} bytes raw mulaw)`);
+                                    console.log('INTENT Enhanced audio format: Raw mulaw, sample rate: 8000Hz, word boosted');
                                 }
                                 
                                 // Enhanced monitoring every 300 packets (more frequent)
                                 if (mediaPacketCount % 300 === 0) {
-                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (PCM-converted stream active)`);
+                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (raw mulaw stream active)`);
                                 }
                             } else if (assemblyAISocket.readyState === 0) {
                                 // Socket still connecting - we'll retry when it's ready
