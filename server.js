@@ -1346,20 +1346,25 @@ function handleTwilioStreamConnection(ws, req) {
                             
                             // Send enhanced audio message to AssemblyAI only if connected
                             if (assemblyAISocket.readyState === 1) {
+                                // Convert mulaw to PCM for AssemblyAI compatibility
+                                const audioBuffer = Buffer.from(audioData, 'base64');
+                                const pcmBuffer = convertMulawToPcm(audioBuffer);
+                                const pcmBase64 = pcmBuffer.toString('base64');
+                                
                                 const enhancedAudioMessage = {
-                                    audio_data: audioData
+                                    audio_data: pcmBase64
                                 };
                                 
                                 assemblyAISocket.send(JSON.stringify(enhancedAudioMessage));
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (${audioData.length} bytes)`);
-                                    console.log('INTENT Enhanced audio format: mulaw, sample rate: 8000Hz, optimized for accuracy');
+                                    console.log(`SUCCESS ENHANCED: First audio packet sent to AssemblyAI (converted mulaw→PCM: ${audioBuffer.length}→${pcmBuffer.length} bytes)`);
+                                    console.log('INTENT Enhanced audio format: PCM converted from mulaw, sample rate: 8000Hz');
                                 }
                                 
                                 // Enhanced monitoring every 300 packets (more frequent)
                                 if (mediaPacketCount % 300 === 0) {
-                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (high-quality stream active)`);
+                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (PCM-converted stream active)`);
                                 }
                             } else if (assemblyAISocket.readyState === 0) {
                                 // Socket still connecting - we'll retry when it's ready
@@ -2186,14 +2191,25 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         console.log('🔍 Auth Token:', process.env.TWILIO_AUTH_TOKEN ? process.env.TWILIO_AUTH_TOKEN.substring(0, 10) + '...' : 'MISSING');
         console.log('🔍 Recording URL format:', url.substring(0, 50) + '...');
         
+        // Verify credentials exist
+        if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+            throw new Error('Missing Twilio credentials - check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN');
+        }
+        
         // Wait a bit for recording to be ready
         await new Promise(resolve => setTimeout(resolve, 2000));
         console.log('⏱️ Waited 2 seconds for recording to be ready...');
         
+        // Create proper basic auth header
+        const authString = `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`;
+        const authHeader = 'Basic ' + Buffer.from(authString).toString('base64');
+        console.log('🔑 Auth header length:', authHeader.length);
+        
         const response = await fetch(url, {
             headers: {
-                'Authorization': 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64'),
-                'User-Agent': 'Real-Time-Call-Processor/1.0'
+                'Authorization': authHeader,
+                'User-Agent': 'Real-Time-Call-Processor/1.0',
+                'Accept': 'audio/*'
             }
         });
         
