@@ -1056,8 +1056,11 @@ function handleTwilioStreamConnection(ws, req) {
     let messageCount = 0;
     let transcriptTimeout = null;
     
-    // Try AssemblyAI first, fallback to Deepgram if it fails
-    if (process.env.ASSEMBLYAI_API_KEY) {
+    // Use Deepgram as primary real-time transcription service
+    if (process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c') {
+        console.log('🎙️ Using Deepgram as primary real-time transcription service...');
+        initializeDeepgramRealtime(callSid, ws);
+    } else if (process.env.ASSEMBLYAI_API_KEY) {
         console.log('AI Creating AssemblyAI real-time session...');
         console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
         try {
@@ -1456,6 +1459,37 @@ function handleTwilioStreamConnection(ws, req) {
                         console.log(`DEBUG Audio data length: ${data.media.payload ? data.media.payload.length : 'NO PAYLOAD'}`);
                         console.log(`DEBUG Audio sequence: ${data.media.sequence}`);
                         console.log(`DEBUG AssemblyAI socket state: ${assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET'}`);
+                        console.log(`DEBUG Deepgram connection: ${ws.deepgramLive ? 'EXISTS' : 'MISSING'}`);
+                    }
+                    
+                    // Handle Deepgram audio forwarding
+                    if (ws.deepgramLive && data.media.payload && twimlFinished) {
+                        try {
+                            const audioData = Buffer.from(data.media.payload, 'base64');
+                            
+                            if (ws.deepgramConnected()) {
+                                ws.deepgramLive.send(audioData);
+                                
+                                if (mediaPacketCount === 1) {
+                                    console.log(`✅ DEEPGRAM: First audio packet sent (${audioData.length} bytes)`);
+                                }
+                                
+                                // Log progress every 300 packets
+                                if (mediaPacketCount % 300 === 0) {
+                                    console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
+                                }
+                            } else {
+                                // Buffer audio until connected
+                                if (ws.deepgramBuffer) {
+                                    ws.deepgramBuffer.push(audioData);
+                                    if (ws.deepgramBuffer.length > 100) {
+                                        ws.deepgramBuffer.shift(); // Keep only last 100 packets
+                                    }
+                                }
+                            }
+                        } catch (deepgramError) {
+                            console.error('❌ Deepgram audio forwarding error:', deepgramError.message);
+                        }
                     }
                     
                     
@@ -1589,6 +1623,11 @@ function handleTwilioStreamConnection(ws, req) {
                     if (assemblyAISocket) {
                         console.log('SOCKET Closing AssemblyAI session...');
                         assemblyAISocket.close();
+                    }
+                    
+                    if (ws.deepgramLive) {
+                        console.log('🛑 DEEPGRAM: Finishing transcription session...');
+                        ws.deepgramLive.finish();
                     }
                     
                     // Final analysis if we have a full transcript
@@ -2577,7 +2616,7 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
 }
 
 // Deepgram real-time transcription initialization
-function initializeDeepgramRealtime(callSid, twilioWs) {
+function initializeDeepgramRealtime(callSid, ws) {
     console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
     
     try {
@@ -2599,6 +2638,8 @@ function initializeDeepgramRealtime(callSid, twilioWs) {
         let isConnected = false;
         let audioBuffer = [];
         let fullTranscript = '';
+        let mediaPacketCount = 0;
+        let twimlFinished = true; // Start immediately for Deepgram
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
@@ -2696,39 +2737,10 @@ function initializeDeepgramRealtime(callSid, twilioWs) {
             }
         });
 
-        // Handle Twilio audio stream
-        const originalOnMessage = twilioWs.onmessage;
-        twilioWs.onmessage = (event) => {
-            // Call original handler first
-            if (originalOnMessage) {
-                originalOnMessage.call(twilioWs, event);
-            }
-
-            try {
-                const data = JSON.parse(event.data);
-                
-                if (data.event === 'media' && data.media.payload) {
-                    const audioData = Buffer.from(data.media.payload, 'base64');
-                    
-                    if (isConnected) {
-                        deepgramLive.send(audioData);
-                    } else {
-                        // Buffer audio until connected
-                        audioBuffer.push(audioData);
-                        if (audioBuffer.length > 100) {
-                            audioBuffer.shift(); // Keep only last 100 packets
-                        }
-                    }
-                }
-                
-                if (data.event === 'stop') {
-                    console.log('🛑 Stopping Deepgram transcription for call:', callSid);
-                    deepgramLive.finish();
-                }
-            } catch (error) {
-                console.error('❌ Error processing Twilio message for Deepgram:', error);
-            }
-        };
+        // Store the Deepgram connection for use in the existing message handler
+        ws.deepgramLive = deepgramLive;
+        ws.deepgramConnected = () => isConnected;
+        ws.deepgramBuffer = audioBuffer;
 
         return deepgramLive;
 
