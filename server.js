@@ -10,12 +10,18 @@ const path = require('path');
 const OpenAI = require('openai');
 const { AssemblyAI } = require('assemblyai');
 
+// Deepgram for real-time transcription
+const { createClient } = require('@deepgram/sdk');
+
 const app = express();
 const server = http.createServer(app);
 
 // Initialize AI clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
+
+// Initialize Deepgram client for real-time transcription
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c');
 
 // Environment configuration
 const PORT = process.env.PORT || 3000;
@@ -1050,6 +1056,7 @@ function handleTwilioStreamConnection(ws, req) {
     let messageCount = 0;
     let transcriptTimeout = null;
     
+    // Try AssemblyAI first, fallback to Deepgram if it fails
     if (process.env.ASSEMBLYAI_API_KEY) {
         console.log('AI Creating AssemblyAI real-time session...');
         console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
@@ -1389,30 +1396,15 @@ function handleTwilioStreamConnection(ws, req) {
             console.error('DEBUG Error details:', error.message);
             console.error('DEBUG Error stack:', error.stack);
             
-            // Broadcast error to dashboard
-            broadcastToClients({
-                type: 'assemblyai_setup_error',
-                message: 'Failed to initialize AssemblyAI - call will proceed without real-time transcription',
-                data: {
-                    callSid: callSid,
-                    error: error.message,
-                    timestamp: new Date().toISOString()
-                }
-            });
+            // Fallback to Deepgram for real-time transcription
+            console.log('🔄 FALLBACK: Switching to Deepgram for real-time transcription...');
+            initializeDeepgramRealtime(callSid, ws);
         }
     } else {
-        console.log('WARNING NO ASSEMBLYAI API KEY - Real-time transcription disabled');
+        console.log('WARNING NO ASSEMBLYAI API KEY - Trying Deepgram for real-time transcription');
         
-        // Broadcast that we'll use post-call analysis instead
-        broadcastToClients({
-            type: 'transcription_fallback',
-            message: 'Real-time transcription unavailable - will analyze recording after call',
-            data: {
-                callSid: callSid,
-                fallbackMethod: 'post_call_recording_analysis',
-                timestamp: new Date().toISOString()
-            }
-        });
+        // Try Deepgram as primary option if no AssemblyAI key
+        initializeDeepgramRealtime(callSid, ws);
     }
     
     let mediaPacketCount = 0;
@@ -2582,4 +2574,178 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
             timestamp: new Date().toISOString()
         };
     }
-} 
+}
+
+// Deepgram real-time transcription initialization
+function initializeDeepgramRealtime(callSid, twilioWs) {
+    console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
+    
+    try {
+        // Create Deepgram live connection
+        const deepgramLive = deepgram.listen.live({
+            model: 'nova-2',
+            language: 'en-US',
+            smart_format: true,
+            interim_results: true,
+            utterance_end_ms: 1000,
+            vad_events: true,
+            punctuate: true,
+            diarize: false, // Disable speaker detection for single track
+            sample_rate: 8000,
+            channels: 1,
+            encoding: 'mulaw'
+        });
+
+        let isConnected = false;
+        let audioBuffer = [];
+        let fullTranscript = '';
+
+        deepgramLive.on('open', () => {
+            console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
+            isConnected = true;
+            
+            // Broadcast connection success
+            broadcastToClients({
+                type: 'deepgram_connected',
+                message: 'Deepgram real-time transcription ready',
+                data: {
+                    callSid: callSid,
+                    provider: 'deepgram',
+                    model: 'nova-2',
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+            // Process any buffered audio
+            if (audioBuffer.length > 0) {
+                console.log(`📤 Sending ${audioBuffer.length} buffered audio packets to Deepgram`);
+                audioBuffer.forEach(audio => deepgramLive.send(audio));
+                audioBuffer = [];
+            }
+        });
+
+        deepgramLive.on('results', (data) => {
+            const transcript = data.channel.alternatives[0];
+            
+            if (transcript && transcript.transcript) {
+                const confidence = transcript.confidence || 0;
+                const isFinal = data.is_final;
+                
+                // Filter low quality transcripts
+                if (confidence > 0.3 && transcript.transcript.trim().length > 2) {
+                    console.log(`🎯 DEEPGRAM: "${transcript.transcript}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
+                    
+                    // Add to full transcript if final
+                    if (isFinal) {
+                        fullTranscript += transcript.transcript + ' ';
+                    }
+                    
+                    // Broadcast to dashboard
+                    broadcastToClients({
+                        type: 'live_transcript',
+                        message: transcript.transcript,
+                        data: {
+                            callSid: callSid,
+                            text: transcript.transcript,
+                            confidence: confidence,
+                            is_final: isFinal,
+                            provider: 'deepgram',
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    
+                    // Process final transcripts for intent detection
+                    if (isFinal && transcript.transcript.trim().length > 2) {
+                        console.log('🧠 Processing Deepgram transcript for intents...');
+                        
+                        // Run intent detection and AI analysis in parallel
+                        Promise.allSettled([
+                            detectAndProcessIntent(transcript.transcript, callSid),
+                            analyzeTranscriptWithAI(transcript.transcript, callSid)
+                        ]).then(results => {
+                            console.log('✅ Deepgram transcript processing completed');
+                        }).catch(error => {
+                            console.error('❌ Deepgram transcript processing error:', error);
+                        });
+                    }
+                }
+            }
+        });
+
+        deepgramLive.on('error', (error) => {
+            console.error('❌ DEEPGRAM ERROR:', error);
+            
+            broadcastToClients({
+                type: 'deepgram_error',
+                message: `Deepgram error: ${error.message}`,
+                data: {
+                    callSid: callSid,
+                    error: error.message,
+                    timestamp: new Date().toISOString()
+                }
+            });
+        });
+
+        deepgramLive.on('close', () => {
+            console.log('🔒 DEEPGRAM CONNECTION CLOSED for call:', callSid);
+            isConnected = false;
+            
+            // Log final transcript
+            if (fullTranscript.trim()) {
+                console.log('📝 DEEPGRAM FULL TRANSCRIPT:', fullTranscript.trim());
+            }
+        });
+
+        // Handle Twilio audio stream
+        const originalOnMessage = twilioWs.onmessage;
+        twilioWs.onmessage = (event) => {
+            // Call original handler first
+            if (originalOnMessage) {
+                originalOnMessage.call(twilioWs, event);
+            }
+
+            try {
+                const data = JSON.parse(event.data);
+                
+                if (data.event === 'media' && data.media.payload) {
+                    const audioData = Buffer.from(data.media.payload, 'base64');
+                    
+                    if (isConnected) {
+                        deepgramLive.send(audioData);
+                    } else {
+                        // Buffer audio until connected
+                        audioBuffer.push(audioData);
+                        if (audioBuffer.length > 100) {
+                            audioBuffer.shift(); // Keep only last 100 packets
+                        }
+                    }
+                }
+                
+                if (data.event === 'stop') {
+                    console.log('🛑 Stopping Deepgram transcription for call:', callSid);
+                    deepgramLive.finish();
+                }
+            } catch (error) {
+                console.error('❌ Error processing Twilio message for Deepgram:', error);
+            }
+        };
+
+        return deepgramLive;
+
+    } catch (error) {
+        console.error('❌ Failed to initialize Deepgram:', error);
+        
+        broadcastToClients({
+            type: 'transcription_fallback',
+            message: 'Real-time transcription unavailable - will analyze recording after call',
+            data: {
+                callSid: callSid,
+                error: error.message,
+                fallbackMethod: 'post_call_recording_analysis',
+                timestamp: new Date().toISOString()
+            }
+        });
+        
+        return null;
+    }
+}
