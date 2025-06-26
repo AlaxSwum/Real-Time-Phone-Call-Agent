@@ -42,6 +42,12 @@ const deepgram = createClient(deepgramApiKey);
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+// Debug environment variables
+console.log('🔍 Environment Variables Debug:');
+console.log('  - BRIDGE_TARGET_NUMBER:', process.env.BRIDGE_TARGET_NUMBER || 'NOT SET');
+console.log('  - NODE_ENV:', NODE_ENV);
+console.log('  - PORT:', PORT);
+
 // Security middleware for production
 if (NODE_ENV === 'production') {
     console.log('🔒 Applying production security middleware...');
