@@ -1149,6 +1149,16 @@ async function handleTwilioStreamConnection(ws, req) {
                                 if (ws.audioBuffer.length > 100) {
                                     ws.audioBuffer.shift(); // Keep only last 100 packets
                                 }
+                                
+                                // If HTTP chunked processing gets initialized while buffering, transfer immediately
+                                if (ws.chunkBuffer !== undefined && ws.chunkProcessor) {
+                                    console.log(`🔄 HTTP chunked processing now active - transferring ${ws.audioBuffer.length} buffered packets...`);
+                                    for (const bufferedMulawData of ws.audioBuffer) {
+                                        const linear16Data = convertMulawToLinear16(bufferedMulawData);
+                                        ws.chunkBuffer = Buffer.concat([ws.chunkBuffer, linear16Data]);
+                                    }
+                                    ws.audioBuffer = []; // Clear the buffer
+                                }
                             }
                         } catch (audioError) {
                             console.error('❌ Audio processing error:', audioError.message);
@@ -2210,6 +2220,17 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     ws.chunkBuffer = Buffer.alloc(0);
     ws.lastProcessTime = Date.now();
     ws.chunkCount = 0;
+    
+    // Process any buffered audio from before HTTP chunked processing was initialized
+    if (ws.audioBuffer && ws.audioBuffer.length > 0) {
+        console.log(`🔄 Processing ${ws.audioBuffer.length} buffered audio packets from before HTTP init...`);
+        for (const mulawData of ws.audioBuffer) {
+            const linear16Data = convertMulawToLinear16(mulawData);
+            ws.chunkBuffer = Buffer.concat([ws.chunkBuffer, linear16Data]);
+        }
+        console.log(`📊 Transferred buffered audio: ${ws.chunkBuffer.length} bytes ready for processing`);
+        ws.audioBuffer = []; // Clear the buffer
+    }
     
     // Process audio chunks every 3 seconds
     ws.chunkProcessor = setInterval(async () => {
