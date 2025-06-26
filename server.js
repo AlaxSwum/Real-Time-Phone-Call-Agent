@@ -1066,15 +1066,17 @@ function handleTwilioStreamConnection(ws, req) {
             });
             
             assemblyAISocket = assemblyAIWS;
-            console.log('BROADCAST AssemblyAI WebSocket connecting optimized to catch every word...');
-            console.log('CONFIG Optimized parameters: speech_threshold=0.1, silence_threshold=200ms, high_accuracy boost');
+            console.log('BROADCAST AssemblyAI WebSocket connecting with PRO PLAN features...');
+            console.log('CONFIG Pro plan parameters optimized for real-time streaming');
             
             assemblyAIWS.on('open', () => {
                 console.log('SUCCESS ASSEMBLYAI REAL-TIME CONNECTED for call:', callSid);
-                console.log('INTENT Optimized for maximum accuracy with word boost');
+                console.log('INTENT Optimized for Pro plan with word boost');
                 console.log('🔑 API Key status:', process.env.ASSEMBLYAI_API_KEY ? 'PROVIDED' : 'MISSING');
                 console.log('🔑 API Key length:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0);
                 console.log('🔑 API Key prefix:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 8) + '...' : 'N/A');
+                console.log('🔑 Expected prefix: 50257827...');
+                console.log('🔑 Keys match:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.startsWith('50257827') : false);
                 
                 // Send OPTIMAL session configuration for phone call transcription
                 try {
@@ -1420,11 +1422,11 @@ function handleTwilioStreamConnection(ws, req) {
     let firstAudioSample = null;
     let audioVariationDetected = false;
     
-    // Delay audio forwarding to avoid TwiML voice pickup
+    // Delay audio forwarding to avoid TwiML voice pickup (reduced for bridge calls)
     setTimeout(() => {
         twimlFinished = true;
         console.log('STREAM TwiML playback should be finished, starting audio capture...');
-    }, 2000); // Optimized timing to avoid TwiML interference
+    }, 1500); // Reduced timing for bridge call compatibility
     
     ws.on('message', (message) => {
         try {
@@ -2365,7 +2367,7 @@ function handleVoiceWebhook(req, res) {
 <Response>
     <Say voice="alice">Connecting your call, please wait...</Say>
     <Start>
-        <Stream url="${streamUrl}" track="both_tracks" />
+        <Stream url="${streamUrl}" track="inbound_track" />
     </Start>
     <Dial 
         record="true" 
