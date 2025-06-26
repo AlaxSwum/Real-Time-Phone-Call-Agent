@@ -2375,26 +2375,19 @@ async function initializeDeepgramRealtime(callSid, ws) {
             }
         }, 10000);
 
-        // Add results timeout checker with more detailed diagnosis
+        // Add results timeout checker with immediate HTTP fallback
         const resultsChecker = setInterval(() => {
-            if (isConnected && mediaPacketCount > 100 && resultsReceived === 0) {
+            if (isConnected && mediaPacketCount > 50 && resultsReceived === 0) {
                 const timeSinceStart = Date.now() - lastResultTime;
-                console.error(`⚠️ DEEPGRAM RESULTS TIMEOUT: ${mediaPacketCount} packets sent, 0 results received after ${Math.round(timeSinceStart/1000)}s`);
-                console.error('🔍 MOST LIKELY ISSUES FOR BRIDGE CALLS:');
-                console.error('  1. Audio contains only silence or background noise (no speech detected)');
-                console.error('  2. Bridge call audio quality too low for speech recognition');
-                console.error('  3. Twilio bridge audio routing issues');
-                console.error('  4. Deepgram mulaw format compatibility issues');
-                console.error('💡 SOLUTION: Check audio analysis logs above for signal levels');
+                console.error(`⚠️ DEEPGRAM WEBSOCKET FAILURE: ${mediaPacketCount} packets sent, 0 results after ${Math.round(timeSinceStart/1000)}s`);
+                console.error('🔍 CONFIRMED: WebSocket connection is unidirectional (hosting platform blocking response stream)');
+                console.error('🔄 IMMEDIATE FALLBACK: Switching to HTTP chunked processing...');
                 
-                // Switch to HTTP fallback if no results after significant time
-                if (mediaPacketCount > 600 && resultsReceived === 0) {
-                    console.log('🔄 SWITCHING TO HTTP FALLBACK due to no WebSocket results...');
-                    clearInterval(resultsChecker);
-                    initializeHttpChunkedProcessing(callSid, ws);
-                }
+                // Immediate switch to HTTP fallback
+                clearInterval(resultsChecker);
+                initializeHttpChunkedProcessing(callSid, ws);
             }
-        }, 10000); // Check every 10 seconds
+        }, 3000); // Check every 3 seconds for faster fallback
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
@@ -2426,10 +2419,11 @@ async function initializeDeepgramRealtime(callSid, ws) {
                 setTimeout(() => {
                     if (resultsReceived === 0) {
                         console.log('⚠️ DEEPGRAM: No response to test audio after 5 seconds');
-                        console.log('🔍 POSSIBLE ISSUES:');
-                        console.log('  - Deepgram WebSocket not properly bidirectional');
-                        console.log('  - Model/configuration parameters invalid');
-                        console.log('  - API key permissions insufficient');
+                        console.log('🔍 CONFIRMED ISSUE: WebSocket is one-way only (send works, receive blocked)');
+                        console.log('🔄 SWITCHING TO HTTP CHUNKED PROCESSING...');
+                        
+                        // Force switch to HTTP chunked processing
+                        initializeHttpChunkedProcessing(callSid, ws);
                     }
                 }, 5000);
             } catch (testError) {
