@@ -1075,24 +1075,31 @@ function handleTwilioStreamConnection(ws, req) {
                         console.log(`DEBUG Deepgram connection: ${ws.deepgramLive ? 'EXISTS' : 'MISSING'}`);
                     }
                     
-                    // Handle Deepgram audio forwarding
+                    // Handle Deepgram audio forwarding with mulaw to linear16 conversion
                     if (ws.deepgramLive && data.media.payload && twimlFinished) {
                         try {
-                            const audioData = Buffer.from(data.media.payload, 'base64');
+                            const mulawData = Buffer.from(data.media.payload, 'base64');
+                            
+                            // Convert mulaw to linear16 PCM for Deepgram compatibility
+                            const linear16Data = convertMulawToLinear16(mulawData);
                             
                             if (ws.deepgramConnected()) {
-                                ws.deepgramLive.send(audioData);
+                                ws.deepgramLive.send(linear16Data);
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`✅ DEEPGRAM: First audio packet sent (${audioData.length} bytes)`);
+                                    console.log(`✅ DEEPGRAM: First audio packet converted and sent`);
+                                    console.log(`🔄 CONVERSION: mulaw ${mulawData.length} bytes → linear16 ${linear16Data.length} bytes`);
                                     
-                                    // Analyze first audio packet for debugging
-                                    let nonZeroBytes = 0;
+                                    // Analyze converted audio for debugging
+                                    let nonZeroSamples = 0;
                                     let maxValue = 0;
-                                    for (let i = 0; i < Math.min(audioData.length, 50); i++) {
-                                        if (audioData[i] !== 0 && audioData[i] !== 127 && audioData[i] !== 255) nonZeroBytes++;
-                                        maxValue = Math.max(maxValue, audioData[i]);
+                                    for (let i = 0; i < Math.min(linear16Data.length, 100); i += 2) {
+                                        const sample = linear16Data.readInt16LE(i);
+                                        if (Math.abs(sample) > 100) nonZeroSamples++;
+                                        maxValue = Math.max(maxValue, Math.abs(sample));
                                     }
+                                    console.log(`🔊 AUDIO ANALYSIS: ${nonZeroSamples}/50 meaningful samples, max amplitude: ${maxValue}`);
+                                    console.log(`🧪 DEEPGRAM: Expecting results within 2-3 seconds with linear16 format...`);
                                 }
                                 
                                 // Log progress every 300 packets and check for results
@@ -1101,9 +1108,9 @@ function handleTwilioStreamConnection(ws, req) {
                                     console.log(`⚠️ DEEPGRAM DEBUG: If no results received yet, there may be a connection issue`);
                                 }
                             } else {
-                                // Buffer audio until connected
+                                // Buffer converted audio until connected
                                 if (ws.deepgramBuffer) {
-                                    ws.deepgramBuffer.push(audioData);
+                                    ws.deepgramBuffer.push(linear16Data);
                                     if (ws.deepgramBuffer.length > 100) {
                                         ws.deepgramBuffer.shift(); // Keep only last 100 packets
                                     }
@@ -2020,6 +2027,58 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
     }
 }
 
+// Mulaw to Linear16 PCM conversion for Deepgram compatibility
+function convertMulawToLinear16(mulawBuffer) {
+    // Mulaw decompression table (8-bit mulaw to 16-bit linear PCM)
+    const mulawToLinear = [
+        -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
+        -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
+        -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
+        -11900, -11388, -10876, -10364, -9852, -9340, -8828, -8316,
+        -7932, -7676, -7420, -7164, -6908, -6652, -6396, -6140,
+        -5884, -5628, -5372, -5116, -4860, -4604, -4348, -4092,
+        -3900, -3772, -3644, -3516, -3388, -3260, -3132, -3004,
+        -2876, -2748, -2620, -2492, -2364, -2236, -2108, -1980,
+        -1884, -1820, -1756, -1692, -1628, -1564, -1500, -1436,
+        -1372, -1308, -1244, -1180, -1116, -1052, -988, -924,
+        -876, -844, -812, -780, -748, -716, -684, -652,
+        -620, -588, -556, -524, -492, -460, -428, -396,
+        -372, -356, -340, -324, -308, -292, -276, -260,
+        -244, -228, -212, -196, -180, -164, -148, -132,
+        -120, -112, -104, -96, -88, -80, -72, -64,
+        -56, -48, -40, -32, -24, -16, -8, 0,
+        32124, 31100, 30076, 29052, 28028, 27004, 25980, 24956,
+        23932, 22908, 21884, 20860, 19836, 18812, 17788, 16764,
+        15996, 15484, 14972, 14460, 13948, 13436, 12924, 12412,
+        11900, 11388, 10876, 10364, 9852, 9340, 8828, 8316,
+        7932, 7676, 7420, 7164, 6908, 6652, 6396, 6140,
+        5884, 5628, 5372, 5116, 4860, 4604, 4348, 4092,
+        3900, 3772, 3644, 3516, 3388, 3260, 3132, 3004,
+        2876, 2748, 2620, 2492, 2364, 2236, 2108, 1980,
+        1884, 1820, 1756, 1692, 1628, 1564, 1500, 1436,
+        1372, 1308, 1244, 1180, 1116, 1052, 988, 924,
+        876, 844, 812, 780, 748, 716, 684, 652,
+        620, 588, 556, 524, 492, 460, 428, 396,
+        372, 356, 340, 324, 308, 292, 276, 260,
+        244, 228, 212, 196, 180, 164, 148, 132,
+        120, 112, 104, 96, 88, 80, 72, 64,
+        56, 48, 40, 32, 24, 16, 8, 0
+    ];
+    
+    // Create buffer for 16-bit linear PCM (2 bytes per sample)
+    const linearBuffer = Buffer.alloc(mulawBuffer.length * 2);
+    
+    for (let i = 0; i < mulawBuffer.length; i++) {
+        const mulawValue = mulawBuffer[i];
+        const linearValue = mulawToLinear[mulawValue];
+        
+        // Write 16-bit little-endian value
+        linearBuffer.writeInt16LE(linearValue, i * 2);
+    }
+    
+    return linearBuffer;
+}
+
 // Deepgram real-time transcription initialization
 function initializeDeepgramRealtime(callSid, ws) {
     console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
@@ -2041,13 +2100,18 @@ function initializeDeepgramRealtime(callSid, ws) {
     }
     
     try {
-        // Create Deepgram live connection with MINIMAL config for debugging
-        console.log('🔗 Creating Deepgram connection with MINIMAL config for debugging...');
+        // Create Deepgram live connection with AUDIO FORMAT TROUBLESHOOTING
+        console.log('🔗 Creating Deepgram connection with AUDIO FORMAT TROUBLESHOOTING...');
+        console.log('🔧 TESTING: Converting mulaw to linear16 for better compatibility...');
         const deepgramLive = deepgram.listen.live({
             model: 'nova-2',
-            language: 'en',
+            language: 'en-GB',
             sample_rate: 8000,
-            encoding: 'mulaw'
+            encoding: 'linear16',  // Changed from mulaw to linear16
+            channels: 1,
+            interim_results: true,
+            smart_format: true,
+            punctuate: true
         });
 
         let isConnected = false;
@@ -2089,7 +2153,8 @@ function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
-            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en-GB language, mulaw encoding, 8kHz sample rate');
+            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en-GB language, linear16 encoding, 8kHz sample rate');
+            console.log('🔄 AUDIO CONVERSION: mulaw → linear16 PCM conversion enabled');
             console.log('🌍 DEEPGRAM REGION: Optimized for UK phone calls');
             isConnected = true;
             clearTimeout(connectionTimeout);
@@ -2109,12 +2174,13 @@ function initializeDeepgramRealtime(callSid, ws) {
             // Broadcast connection success
             broadcastToClients({
                 type: 'deepgram_connected',
-                message: 'Deepgram real-time transcription ready (nova-2 model)',
+                message: 'Deepgram real-time transcription ready (nova-2 model with audio conversion)',
                 data: {
                     callSid: callSid,
                     provider: 'deepgram',
                     model: 'nova-2',
-                    encoding: 'mulaw',
+                    encoding: 'linear16',
+                    audio_conversion: 'mulaw → linear16',
                     sample_rate: 8000,
                     timestamp: new Date().toISOString()
                 }
