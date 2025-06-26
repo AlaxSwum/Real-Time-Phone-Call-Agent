@@ -1080,24 +1080,22 @@ async function handleTwilioStreamConnection(ws, req) {
                         try {
                             const mulawData = Buffer.from(data.media.payload, 'base64');
                             
-                            // Convert mulaw to linear16 PCM for Deepgram compatibility
-                            const linear16Data = convertMulawToLinear16(mulawData);
-                            
-                            // Try WebSocket first, fallback to HTTP chunked processing
+                            // Try WebSocket first (using raw mulaw), fallback to HTTP chunked processing
                             if (ws.deepgramLive && ws.deepgramConnected()) {
-                                // WebSocket mode
-                                ws.deepgramLive.send(linear16Data);
+                                // WebSocket mode - send raw mulaw data
+                                ws.deepgramLive.send(mulawData);
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`✅ DEEPGRAM WEBSOCKET: First audio packet sent`);
-                                    console.log(`🔄 CONVERSION: mulaw ${mulawData.length} bytes → linear16 ${linear16Data.length} bytes`);
+                                    console.log(`✅ DEEPGRAM WEBSOCKET: First mulaw packet sent (${mulawData.length} bytes)`);
+                                    console.log(`🎯 USING RAW MULAW: No conversion for WebSocket mode`);
                                 }
                                 
                                 if (mediaPacketCount % 300 === 0) {
-                                    console.log(`🎙️ DEEPGRAM WEBSOCKET: ${mediaPacketCount} audio packets sent`);
+                                    console.log(`🎙️ DEEPGRAM WEBSOCKET: ${mediaPacketCount} mulaw packets sent`);
                                 }
                             } else if (ws.chunkProcessor) {
-                                // HTTP chunked processing mode
+                                // HTTP chunked processing mode - convert to linear16
+                                const linear16Data = convertMulawToLinear16(mulawData);
                                 ws.chunkBuffer = Buffer.concat([ws.chunkBuffer, linear16Data]);
                                 
                                 if (mediaPacketCount === 1) {
@@ -1112,7 +1110,7 @@ async function handleTwilioStreamConnection(ws, req) {
                             } else {
                                 // Buffer until either WebSocket or HTTP chunked is ready
                                 if (!ws.audioBuffer) ws.audioBuffer = [];
-                                ws.audioBuffer.push(linear16Data);
+                                ws.audioBuffer.push(mulawData);
                                 if (ws.audioBuffer.length > 100) {
                                     ws.audioBuffer.shift(); // Keep only last 100 packets
                                 }
@@ -2307,15 +2305,15 @@ async function initializeDeepgramRealtime(callSid, ws) {
         console.log('🔗 Creating Deepgram WebSocket connection...');
         console.log('🔧 TESTING: mulaw → linear16 with 8kHz → 16kHz upsampling...');
         console.log('🎯 MODEL: Using enhanced-general model for better compatibility...');
-        // Try MINIMAL configuration to avoid WebSocket connection issues
-        console.log('🔧 USING MINIMAL CONFIG to troubleshoot WebSocket connection...');
+        // Use ORIGINAL 8kHz configuration since WebSocket is now working
+        console.log('🔧 REVERTING to 8kHz mulaw - WebSocket working but no results...');
         const deepgramLive = deepgram.listen.live({
-            model: 'nova-2',  // Back to nova-2 - more stable
-            language: 'en',   // Simplified language code
-            sample_rate: 16000,
-            encoding: 'linear16',
-            channels: 1
-            // Removed all optional parameters that might cause WebSocket issues
+            model: 'nova-2',
+            language: 'en',
+            sample_rate: 8000,  // Back to original Twilio sample rate
+            encoding: 'mulaw',  // Back to original Twilio encoding
+            channels: 1,
+            interim_results: true
         });
 
         let isConnected = false;
@@ -2357,10 +2355,10 @@ async function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
-            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en-GB language, linear16 encoding, 16kHz sample rate');
-            console.log('🔄 AUDIO CONVERSION: mulaw → linear16 PCM with 8kHz → 16kHz upsampling');
-            console.log('🎯 VAD EVENTS: Voice Activity Detection enabled');
-            console.log('🌍 DEEPGRAM REGION: Optimized for UK phone calls');
+            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en language, mulaw encoding, 8kHz sample rate');
+            console.log('🎯 RAW MULAW: Sending original Twilio audio format directly');
+            console.log('📊 INTERIM RESULTS: Enabled for real-time transcription');
+            console.log('🌍 DEEPGRAM REGION: Optimized for phone calls');
             isConnected = true;
             clearTimeout(connectionTimeout);
             
@@ -2379,13 +2377,13 @@ async function initializeDeepgramRealtime(callSid, ws) {
             // Broadcast connection success
             broadcastToClients({
                 type: 'deepgram_connected',
-                message: 'Deepgram real-time transcription ready (nova-2 model with audio conversion)',
+                message: 'Deepgram real-time transcription ready (nova-2 model with raw mulaw)',
                 data: {
                     callSid: callSid,
                     provider: 'deepgram',
                     model: 'nova-2',
-                    encoding: 'linear16',
-                    audio_conversion: 'mulaw → linear16',
+                    encoding: 'mulaw',
+                    audio_format: 'raw_mulaw_8khz',
                     sample_rate: 8000,
                     timestamp: new Date().toISOString()
                 }
