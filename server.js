@@ -1145,6 +1145,10 @@ async function handleTwilioStreamConnection(ws, req) {
                                 try {
                                     console.log(`🔄 Processing final chunk (${ws.chunkBuffer.length} bytes)`);
                                     
+                                    // Create proper WAV file for final chunk
+                                    const wavHeader = createWavHeader(ws.chunkBuffer.length);
+                                    const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
+                                    
                                     const response = await fetch('https://api.deepgram.com/v1/listen', {
                                         method: 'POST',
                                         headers: {
@@ -1152,7 +1156,7 @@ async function handleTwilioStreamConnection(ws, req) {
                                             'Content-Type': 'audio/wav',
                                             'Accept': 'application/json'
                                         },
-                                        body: ws.chunkBuffer
+                                        body: wavFile
                                     });
                                     
                                     if (response.ok) {
@@ -2080,6 +2084,35 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
     }
 }
 
+// Create WAV header for PCM audio data
+function createWavHeader(pcmDataLength, sampleRate = 16000, channels = 1, bitsPerSample = 16) {
+    const header = Buffer.alloc(44);
+    const bytesPerSample = bitsPerSample / 8;
+    const blockAlign = channels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    
+    // RIFF header
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + pcmDataLength, 4);
+    header.write('WAVE', 8);
+    
+    // fmt chunk
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16); // fmt chunk size
+    header.writeUInt16LE(1, 20);  // audio format (PCM)
+    header.writeUInt16LE(channels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    
+    // data chunk
+    header.write('data', 36);
+    header.writeUInt32LE(pcmDataLength, 40);
+    
+    return header;
+}
+
 // Mulaw to Linear16 PCM conversion with upsampling for Deepgram compatibility
 function convertMulawToLinear16(mulawBuffer) {
     // Mulaw decompression table (8-bit mulaw to 16-bit linear PCM)
@@ -2151,8 +2184,11 @@ function initializeHttpChunkedProcessing(callSid, ws) {
             try {
                 console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
                 
-                // Convert chunk to base64 for HTTP API
-                const base64Audio = ws.chunkBuffer.toString('base64');
+                // Create proper WAV file with header
+                const wavHeader = createWavHeader(ws.chunkBuffer.length);
+                const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
+                
+                console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
                 
                 // Send to Deepgram HTTP API
                 const response = await fetch('https://api.deepgram.com/v1/listen', {
@@ -2162,7 +2198,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         'Content-Type': 'audio/wav',
                         'Accept': 'application/json'
                     },
-                    body: ws.chunkBuffer
+                    body: wavFile
                 });
                 
                 if (response.ok) {
