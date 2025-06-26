@@ -18,8 +18,20 @@ const { RealtimeTranscriber } = require('assemblyai');
 const app = express();
 const server = http.createServer(app);
 
-// Initialize AI clients
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Initialize AI clients - handle OpenAI gracefully
+let openai = null;
+try {
+    if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0) {
+        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        console.log('🧠 OpenAI client initialized successfully');
+    } else {
+        console.log('⚠️ OpenAI API key not provided - AI analysis will be skipped');
+    }
+} catch (error) {
+    console.error('❌ Failed to initialize OpenAI:', error.message);
+    console.log('⚠️ Continuing without OpenAI - AI analysis will be skipped');
+    openai = null;
+}
 
 // Initialize Deepgram client for real-time transcription
 const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '7fba0511f54adc490a379bd27cf84720b71ae433';
@@ -774,6 +786,11 @@ function broadcastToClients(message) {
 
 // Analyze transcript with OpenAI
 async function analyzeTranscriptWithAI(text, callSid) {
+    if (!openai) {
+        console.log('⏭️ Skipping AI analysis - OpenAI not configured');
+        return;
+    }
+    
     try {
         console.log('🧠 Analyzing transcript with OpenAI...');
         
@@ -2061,49 +2078,67 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         };
         
         // Analyze with OpenAI for meeting insights
-        console.log('🧠 Analyzing bridge conversation with OpenAI...');
-        const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-                {
-                    role: "system",
-                    content: `You are an AI assistant analyzing a bridge call conversation between two people. Provide a JSON response with:
-                    {
-                        "conversation_type": "meeting/negotiation/support/consultation/other",
-                        "participants": ["speaker_a_role", "speaker_b_role"],
-                        "key_topics": ["topic1", "topic2"],
-                        "decisions_made": ["decision1", "decision2"],
-                        "action_items": ["action1", "action2"],
-                        "sentiment": "positive/neutral/negative",
-                        "urgency": "low/medium/high",
-                        "follow_up_needed": true/false,
-                        "summary": "brief professional summary of the conversation",
-                        "emails_mentioned": ["email1@domain.com"],
-                        "dates_mentioned": ["next friday", "january 15th"],
-                        "next_steps": "recommended next steps"
-                    }`
-                },
-                {
-                    role: "user",
-                    content: `Bridge call conversation transcript: "${transcriptResult.text}"`
-                }
-            ],
-            temperature: 0.2
-        });
+        let aiAnalysis = {
+            conversation_type: "meeting",
+            participants: ["speaker_a", "speaker_b"],
+            key_topics: ["general discussion"],
+            summary: "Bridge call recording analysis completed without AI analysis",
+            sentiment: "neutral",
+            urgency: "medium",
+            follow_up_needed: true
+        };
         
-        let aiAnalysis;
-        try {
-            aiAnalysis = JSON.parse(aiResponse.choices[0].message.content);
-        } catch (parseError) {
-            aiAnalysis = {
-                conversation_type: "meeting",
-                participants: ["speaker_a", "speaker_b"],
-                key_topics: ["general discussion"],
-                summary: aiResponse.choices[0].message.content,
-                sentiment: "neutral",
-                urgency: "medium",
-                follow_up_needed: true
-            };
+        if (openai) {
+            console.log('🧠 Analyzing bridge conversation with OpenAI...');
+            try {
+                const aiResponse = await openai.chat.completions.create({
+                    model: "gpt-4o-mini",
+                    messages: [
+                        {
+                            role: "system",
+                            content: `You are an AI assistant analyzing a bridge call conversation between two people. Provide a JSON response with:
+                            {
+                                "conversation_type": "meeting/negotiation/support/consultation/other",
+                                "participants": ["speaker_a_role", "speaker_b_role"],
+                                "key_topics": ["topic1", "topic2"],
+                                "decisions_made": ["decision1", "decision2"],
+                                "action_items": ["action1", "action2"],
+                                "sentiment": "positive/neutral/negative",
+                                "urgency": "low/medium/high",
+                                "follow_up_needed": true/false,
+                                "summary": "brief professional summary of the conversation",
+                                "emails_mentioned": ["email1@domain.com"],
+                                "dates_mentioned": ["next friday", "january 15th"],
+                                "next_steps": "recommended next steps"
+                            }`
+                        },
+                        {
+                            role: "user",
+                            content: `Bridge call conversation transcript: "${transcriptResult.text}"`
+                        }
+                    ],
+                    temperature: 0.2
+                });
+                
+                try {
+                    aiAnalysis = JSON.parse(aiResponse.choices[0].message.content);
+                } catch (parseError) {
+                    aiAnalysis = {
+                        conversation_type: "meeting",
+                        participants: ["speaker_a", "speaker_b"],
+                        key_topics: ["general discussion"],
+                        summary: aiResponse.choices[0].message.content,
+                        sentiment: "neutral",
+                        urgency: "medium",
+                        follow_up_needed: true
+                    };
+                }
+            } catch (aiError) {
+                console.error('❌ OpenAI analysis failed:', aiError.message);
+                console.log('⚠️ Using fallback analysis');
+            }
+        } else {
+            console.log('⚠️ OpenAI not available - using basic analysis');
         }
         
         return {
