@@ -405,8 +405,8 @@
                     <span class="status-value status-loading" id="ws-status">Connecting</span>
                 </div>
                 <div class="status-item">
-                    <span class="status-label">AssemblyAI</span>
-                    <span class="status-value status-loading" id="assemblyai-status">Not configured</span>
+                    <span class="status-label">Deepgram</span>
+                    <span class="status-value status-loading" id="deepgram-status">Not configured</span>
                 </div>
                 <div class="status-item">
                     <span class="status-label">OpenAI</span>
@@ -456,7 +456,7 @@
                 <h2 style="margin-top: 20px;">Quick Actions</h2>
                 <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
                     <button class="btn" onclick="testAPI()">Test API Health</button>
-                    <button class="btn" onclick="testAssemblyAI()">Test AssemblyAI</button>
+                    <button class="btn" onclick="testDeepgram()">Test Deepgram</button>
                     <button class="btn" onclick="showTestModal()">Test AI Processing</button>
                 </div>
             </div>
@@ -532,24 +532,24 @@
             }
         }
         
-        async function testAssemblyAI() {
-            log('Testing AssemblyAI connection...');
+        async function testDeepgram() {
+            log('Testing Deepgram connection...');
             try {
-                const response = await fetch('/test/assemblyai', {
-                    method: 'POST',
+                const response = await fetch('/test/transcription-priority', {
+                    method: 'GET',
                     headers: { 'Content-Type': 'application/json' }
                 });
                 const data = await response.json();
-                if (data.success) {
-                    log('AssemblyAI test successful');
-                    updateStatus('assemblyai-status', 'online');
+                if (data.services_available?.deepgram) {
+                    log('Deepgram test successful - API key configured');
+                    updateStatus('deepgram-status', 'online');
                 } else {
-                    log(`AssemblyAI test failed: ${data.error}`);
-                    updateStatus('assemblyai-status', 'offline');
+                    log('Deepgram test failed: No API key configured');
+                    updateStatus('deepgram-status', 'offline');
                 }
             } catch (error) {
-                log(`AssemblyAI test error: ${error.message}`);
-                updateStatus('assemblyai-status', 'offline');
+                log(`Deepgram test error: ${error.message}`);
+                updateStatus('deepgram-status', 'offline');
             }
         }
         
@@ -744,8 +744,8 @@
             if (data.services?.openai?.configured) {
                 updateStatus('openai-status', 'online');
             }
-            if (data.services?.assemblyai?.configured) {
-                updateStatus('assemblyai-status', 'online');
+            if (data.services?.deepgram?.configured) {
+                updateStatus('deepgram-status', 'online');
             }
         }
         

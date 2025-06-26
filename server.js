@@ -8,7 +8,6 @@ const path = require('path');
 
 // AI Service imports
 const OpenAI = require('openai');
-const { AssemblyAI } = require('assemblyai');
 
 // Deepgram for real-time transcription
 const { createClient } = require('@deepgram/sdk');
@@ -18,7 +17,6 @@ const server = http.createServer(app);
 
 // Initialize AI clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
 // Initialize Deepgram client for real-time transcription
 const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '7fba0511f54adc490a379bd27cf84720b71ae433';
@@ -40,7 +38,7 @@ if (NODE_ENV === 'production') {
                 scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
                 scriptSrcAttr: ["'self'", "'unsafe-inline'"],
                 imgSrc: ["'self'", "data:", "https:"],
-                connectSrc: ["'self'", "ws:", "wss:", "https://api.assemblyai.com", "https://api.openai.com"]
+                connectSrc: ["'self'", "ws:", "wss:", "https://api.openai.com"]
             },
         },
         hsts: {
@@ -87,57 +85,7 @@ app.use(express.static('public'));
 let dashboardClients = new Set();
 let activeStreams = new Map();
 
-// Mulaw to PCM conversion function for AssemblyAI compatibility
-function convertMulawToPcm(mulawBuffer) {
-    // Mulaw decompression table (256 values)
-    const mulawToPcm = [
-        -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
-        -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
-        -15996, -15484, -14972, -14460, -13948, -13436, -12924, -12412,
-        -11900, -11388, -10876, -10364, -9852, -9340, -8828, -8316,
-        -7932, -7676, -7420, -7164, -6908, -6652, -6396, -6140,
-        -5884, -5628, -5372, -5116, -4860, -4604, -4348, -4092,
-        -3900, -3772, -3644, -3516, -3388, -3260, -3132, -3004,
-        -2876, -2748, -2620, -2492, -2364, -2236, -2108, -1980,
-        -1884, -1820, -1756, -1692, -1628, -1564, -1500, -1436,
-        -1372, -1308, -1244, -1180, -1116, -1052, -988, -924,
-        -876, -844, -812, -780, -748, -716, -684, -652,
-        -620, -588, -556, -524, -492, -460, -428, -396,
-        -372, -356, -340, -324, -308, -292, -276, -260,
-        -244, -228, -212, -196, -180, -164, -148, -132,
-        -120, -112, -104, -96, -88, -80, -72, -64,
-        -56, -48, -40, -32, -24, -16, -8, 0,
-        32124, 31100, 30076, 29052, 28028, 27004, 25980, 24956,
-        23932, 22908, 21884, 20860, 19836, 18812, 17788, 16764,
-        15996, 15484, 14972, 14460, 13948, 13436, 12924, 12412,
-        11900, 11388, 10876, 10364, 9852, 9340, 8828, 8316,
-        7932, 7676, 7420, 7164, 6908, 6652, 6396, 6140,
-        5884, 5628, 5372, 5116, 4860, 4604, 4348, 4092,
-        3900, 3772, 3644, 3516, 3388, 3260, 3132, 3004,
-        2876, 2748, 2620, 2492, 2364, 2236, 2108, 1980,
-        1884, 1820, 1756, 1692, 1628, 1564, 1500, 1436,
-        1372, 1308, 1244, 1180, 1116, 1052, 988, 924,
-        876, 844, 812, 780, 748, 716, 684, 652,
-        620, 588, 556, 524, 492, 460, 428, 396,
-        372, 356, 340, 324, 308, 292, 276, 260,
-        244, 228, 212, 196, 180, 164, 148, 132,
-        120, 112, 104, 96, 88, 80, 72, 64,
-        56, 48, 40, 32, 24, 16, 8, 0
-    ];
-    
-    // Convert mulaw bytes to 16-bit PCM samples
-    const pcmBuffer = Buffer.alloc(mulawBuffer.length * 2); // 16-bit = 2 bytes per sample
-    
-    for (let i = 0; i < mulawBuffer.length; i++) {
-        const mulawValue = mulawBuffer[i];
-        const pcmValue = mulawToPcm[mulawValue];
-        
-        // Write 16-bit PCM value in little-endian format
-        pcmBuffer.writeInt16LE(pcmValue, i * 2);
-    }
-    
-    return pcmBuffer;
-}
+
 
 // Intent detection and processing function
 async function detectAndProcessIntent(text, callSid) {
@@ -753,8 +701,8 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         environment: NODE_ENV,
         services: {
-            assemblyai: {
-                configured: !!process.env.ASSEMBLYAI_API_KEY,
+            deepgram: {
+                configured: !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey),
                 status: 'operational'
             },
             openai: {
@@ -790,8 +738,7 @@ app.get('/api', (req, res) => {
             dashboard: '/',
             websocket: '/ws',
             stream: '/stream',
-            test_assemblyai: '/test/assemblyai',
-            test_assemblyai_ws: '/test/assemblyai-ws',
+
             documentation: 'https://github.com/AlaxSwum/Real-Time-Phone-Call-Agent'
         }
     });
@@ -1052,377 +999,26 @@ function handleTwilioStreamConnection(ws, req) {
     console.log(`BROADCAST Headers:`, req.headers);
     
     // DEBUG: Show transcription service selection logic
-    const hasAssemblyAI = !!process.env.ASSEMBLYAI_API_KEY;
     const hasDeepgram = !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey);
     console.log(`🔍 TRANSCRIPTION SERVICE DEBUG:`);
-    console.log(`  - AssemblyAI available: ${hasAssemblyAI} (API key: ${hasAssemblyAI ? 'SET' : 'MISSING'})`);
     console.log(`  - Deepgram available: ${hasDeepgram} (API key: ${hasDeepgram ? 'SET' : 'MISSING'})`);
-    console.log(`  - Will use: ${hasDeepgram ? 'DEEPGRAM' : hasAssemblyAI ? 'ASSEMBLYAI' : 'NONE'}`);
+    console.log(`  - Will use: ${hasDeepgram ? 'DEEPGRAM' : 'NONE'}`);
     
     // Initialize variables for this stream
-    let assemblyAISocket = null;
     let fullTranscript = '';
-    let lastTranscriptTime = Date.now();
-    let messageCount = 0;
-    let transcriptTimeout = null;
     
-    // Use Deepgram as primary real-time transcription service
+    // Use Deepgram for real-time transcription service
     if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
-        console.log('🎙️ Using Deepgram as primary real-time transcription service...');
+        console.log('🎙️ Using Deepgram for real-time transcription service...');
         initializeDeepgramRealtime(callSid, ws);
-    } else if (false && process.env.ASSEMBLYAI_API_KEY) { // AssemblyAI disabled
-        console.log('AI Creating AssemblyAI real-time session...');
-        console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
-        try {
-            // Create WebSocket connection to AssemblyAI real-time service with FIXED authentication
-            const WS = require('ws');
-            const assemblyAIWS = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000', {
-                headers: {
-                    'Authorization': process.env.ASSEMBLYAI_API_KEY
-                },
-                handshakeTimeout: 25000,
-                timeout: 60000,
-                perMessageDeflate: false
-            });
-            
-            assemblyAISocket = assemblyAIWS;
-            console.log('BROADCAST AssemblyAI WebSocket connecting with PRO PLAN features...');
-            console.log('CONFIG Pro plan parameters optimized for real-time streaming');
-            
-            assemblyAIWS.on('open', () => {
-                console.log('SUCCESS ASSEMBLYAI REAL-TIME CONNECTED for call:', callSid);
-                console.log('INTENT Optimized for Pro plan with word boost');
-                console.log('🔑 API Key status:', process.env.ASSEMBLYAI_API_KEY ? 'PROVIDED' : 'MISSING');
-                console.log('🔑 API Key length:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0);
-                console.log('🔑 API Key prefix:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 8) + '...' : 'N/A');
-                console.log('🔑 Expected prefix: 50257827...');
-                console.log('🔑 Keys match:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.startsWith('50257827') : false);
-                
-                // Send OPTIMAL session configuration for phone call transcription
-                try {
-                    const sessionConfig = {
-                        sample_rate: 8000,
-                        encoding: "pcm_s16le", // Use standard PCM encoding for better compatibility
-                        word_boost: [
-                            // Meeting related
-                            "meeting", "arrange", "schedule", "appointment", "consultation", "discuss", "conference",
-                            // Email providers
-                            "email", "gmail", "outlook", "yahoo", "hotmail", "icloud", "protonmail",
-                            // Common business terms
-                            "call", "phone", "contact", "reach", "connect", "business", "work", "office",
-                            // Time references
-                            "monday", "tuesday", "wednesday", "thursday", "friday", "today", "tomorrow", "week",
-                            // Actions
-                            "send", "follow", "up", "callback", "return", "later"
-                        ],
-                        format_text: true,
-                        enable_extra_session_information: true,
-                        speaker_labels: false, // Disable for single speaker optimization
-                        filter_profanity: false,
-                        redact_pii: false,
-                        speech_threshold: 0.1, // Lower threshold for better speech detection
-                        silence_threshold: 500, // Increased to reduce false positives
-                        auto_highlights: false, // Disable for better performance
-                        disfluencies: false // Remove ums, ahs for cleaner output
-                    };
-                    assemblyAIWS.send(JSON.stringify(sessionConfig));
-                    console.log('📤 Sent OPTIMAL phone call session configuration to AssemblyAI');
-                } catch (configError) {
-                    console.error('❌ Failed to send session config:', configError);
-                }
-                
-                // Broadcast connection success
-                broadcastToClients({
-                    type: 'assemblyai_connected',
-                    message: 'High-accuracy real-time transcription ready',
-                    data: {
-                        callSid: callSid,
-                        timestamp: new Date().toISOString(),
-                        configuration: 'enhanced_accuracy_word_boost'
-                    }
-                });
-            });
-            
-            assemblyAIWS.on('message', (data) => {
-                lastTranscriptTime = Date.now(); // Update timestamp for timeout monitoring
-                messageCount++;
-                try {
-                    const transcript = JSON.parse(data);
-                    
-                    if (transcript.message_type === 'SessionBegins') {
-                        console.log('SESSION AssemblyAI session started for call:', callSid);
-                        console.log('CONFIG Session configuration confirmed - enhanced accuracy mode');
-                        
-                        // Broadcast session start to dashboard
-                        broadcastToClients({
-                            type: 'transcription_ready',
-                            message: 'Enhanced real-time transcription activated',
-                            data: {
-                                callSid: callSid,
-                                timestamp: new Date().toISOString(),
-                                accuracy_mode: 'enhanced'
-                            }
-                        });
-                        
-                    } else if (transcript.message_type === 'PartialTranscript' || transcript.message_type === 'FinalTranscript') {
-                         const isPartial = transcript.message_type === 'PartialTranscript';
-                         
-                         // OPTIMIZED filtering for phone call transcription (reduced thresholds for better detection)
-                         const minConfidence = 0.2; // Lower threshold to capture more speech
-                         const minLength = 2; // Shorter minimum length to catch brief responses
-                         
-                         console.log(`📞 PHONE TRANSCRIPT DEBUG: "${transcript.text}" (${transcript.message_type}, confidence: ${transcript.confidence}, words: ${transcript.words ? transcript.words.length : 0})`);
-                         
-                         // Enhanced validation for phone call quality
-                         const hasValidText = transcript.text && transcript.text.trim().length >= minLength;
-                         const hasGoodConfidence = transcript.confidence >= minConfidence;
-                         
-                         // Advanced hallucination detection for phone calls
-                         const isLikelyHallucination = transcript.text && (
-                             transcript.text.trim().length < 3 ||
-                             /^[a-z]{1,3}\.?$/i.test(transcript.text.trim()) || // Single letters
-                             /^(um|uh|ah|oh|mm|hmm)\.?$/i.test(transcript.text.trim()) || // Filler words
-                             /^[.,!?]+$/.test(transcript.text.trim()) || // Only punctuation
-                             transcript.confidence < 0.3 ||
-                             // Filter out common phone call artifacts
-                             /^(static|noise|beep|ring|dial|tone)\.?$/i.test(transcript.text.trim())
-                         );
-                         
-                         if (hasValidText && hasGoodConfidence && !isLikelyHallucination) {
-                             console.log(`✅ ASSEMBLYAI VALID SPEECH: "${transcript.text}" (confidence: ${transcript.confidence})`);
-                            
-                            if (transcriptTimeout) {
-                                clearInterval(transcriptTimeout);
-                                transcriptTimeout = null;
-                                console.log('SUCCESS AssemblyAI real-time transcription working successfully!');
-                            }
-                            
-                            // Add to full transcript only for final transcripts with good confidence
-                            if (transcript.message_type === 'FinalTranscript') {
-                                fullTranscript += transcript.text + ' ';
-                                console.log(`SUCCESS Added to enhanced transcript: "${transcript.text}"`);
-                            }
-                            
-                            // Broadcast clean speech without technical details
-                            broadcastToClients({
-                                type: 'live_transcript',
-                                message: transcript.text,
-                                data: {
-                                    callSid: callSid,
-                                    text: transcript.text,
-                                    confidence: transcript.confidence,
-                                    is_final: transcript.message_type === 'FinalTranscript',
-                                    timestamp: new Date().toISOString()
-                                }
-                            });
-                            
-                            // If final transcript, analyze with OpenAI and detect intents
-                            if (transcript.message_type === 'FinalTranscript' && transcript.text.trim().length > 2) {
-                                console.log('🧠 Analyzing transcript for intents...');
-                                
-                                // Run all operations in parallel for faster processing
-                                const parallelOperations = [
-                                    detectAndProcessIntent(transcript.text, callSid),
-                                    analyzeTranscriptWithAI(transcript.text, callSid)
-                                ];
-                                
-                                // Start all operations simultaneously
-                                Promise.allSettled(parallelOperations).then(results => {
-                                    const [intentResult, aiResult] = results;
-                                    
-                                    if (intentResult.status === 'rejected') {
-                                        console.error('❌ Intent detection failed:', intentResult.reason);
-                                    } else {
-                                        console.log('✅ Intent detection completed');
-                                    }
-                                    
-                                    if (aiResult.status === 'rejected') {
-                                        console.error('❌ AI analysis failed:', aiResult.reason);
-                                    } else {
-                                        console.log('✅ AI analysis completed');
-                                    }
-                                    
-                                    console.log('🚀 Parallel processing completed');
-                                }).catch(error => {
-                                    console.error('❌ Parallel processing error:', error);
-                                });
-                            }
-                        } else {
-                            if (isLikelyHallucination) {
-                                console.log(`🚫 FILTERED HALLUCINATION: "${transcript.text}" (confidence: ${transcript.confidence})`);
-                            } else if (!hasGoodConfidence) {
-                                console.log(`🚫 FILTERED LOW CONFIDENCE: "${transcript.text}" (confidence: ${transcript.confidence})`);
-                            } else if (!hasValidText) {
-                                console.log(`🚫 FILTERED EMPTY/SHORT: "${transcript.text}"`);
-                            }
-                         }
-                        
-                    } else if (transcript.message_type === 'SessionTerminated') {
-                        console.log('END AssemblyAI session terminated for call:', callSid);
-                    } else if (transcript.message_type === 'Error') {
-                        console.error('ERROR AssemblyAI Error:', transcript.error);
-                        
-                        // Broadcast error for debugging
-                        broadcastToClients({
-                            type: 'assemblyai_error',
-                            message: `AssemblyAI Error: ${transcript.error}`,
-                            data: {
-                                callSid: callSid,
-                                error: transcript.error,
-                                timestamp: new Date().toISOString()
-                            }
-                        });
-                    } else if (transcript.message_type) {
-                        console.log(`BROADCAST AssemblyAI Enhanced: ${transcript.message_type}`);
-                    }
-                } catch (parseError) {
-                    console.error('ERROR Error parsing enhanced AssemblyAI message:', parseError);
-                }
-            });
-            
-            assemblyAIWS.on('error', (error) => {
-                console.error('ERROR ASSEMBLYAI ENHANCED ERROR:', error);
-                console.error('DEBUG Error details:', error.message);
-                console.error('DEBUG Error code:', error.code);
-                
-                // Enhanced error handling
-                if (error.code === 'ECONNREFUSED') {
-                    console.error('DEBUG Connection refused - check network connectivity');
-                } else if (error.code === 'ENOTFOUND') {
-                    console.error('DEBUG DNS resolution failed - check internet connection');
-                } else if (error.message.includes('401') || error.message.includes('403')) {
-                    console.error('DEBUG Authentication failed - check AssemblyAI API key');
-                    console.error('API API Key status:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
-                    console.error('API API Key length:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 'N/A');
-                    console.error('API API Key prefix:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 10) + '...' : 'N/A');
-                }
-                
-                // Broadcast enhanced error to dashboard
-                broadcastToClients({
-                    type: 'assemblyai_error',
-                    message: `Enhanced AssemblyAI Error: ${error.message}`,
-                    data: {
-                        callSid: callSid,
-                        error: error.message,
-                        code: error.code,
-                        timestamp: new Date().toISOString(),
-                        enhanced_mode: true
-                    }
-                });
-            });
-            
-            assemblyAIWS.on('close', (code, reason) => {
-                console.log('SOCKET Enhanced AssemblyAI WebSocket closed for call:', callSid);
-                console.log('DEBUG Enhanced close code:', code, 'Reason:', reason.toString());
-                
-                // Enhanced close code handling with more specific errors
-                let closeMessage = '';
-                switch (code) {
-                    case 1000:
-                        closeMessage = 'Normal closure';
-                        break;
-                    case 1001:
-                        closeMessage = 'Endpoint going away';
-                        break;
-                    case 1005:
-                        closeMessage = 'No status code (likely authentication/configuration issue)';
-                        console.error('DEBUG Code 1005: Check API key and connection parameters');
-                        console.error('API Verify AssemblyAI API key is valid and has real-time permissions');
-                        break;
-                    case 1006:
-                        closeMessage = 'Abnormal closure (connection lost)';
-                        break;
-                    case 1011:
-                        closeMessage = 'Server error';
-                        break;
-                    case 4101:
-                        closeMessage = 'AUTHENTICATION ERROR - Invalid API key or quota exceeded';
-                        console.error('❌ CRITICAL: AssemblyAI API key is invalid or quota exceeded');
-                        console.error('🔑 API Key provided:', process.env.ASSEMBLYAI_API_KEY ? 'YES (length: ' + process.env.ASSEMBLYAI_API_KEY.length + ')' : 'NO');
-                        console.error('🔑 API Key prefix:', process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 8) + '...' : 'N/A');
-                        console.error('💡 Solution: Check your AssemblyAI account at https://www.assemblyai.com/app');
-                        console.error('💡 Note: Real-time transcription requires higher tier than basic transcription');
-                        
-                        // Broadcast helpful error message to dashboard with specific solution
-                        broadcastToClients({
-                            type: 'assemblyai_quota_error',
-                            message: 'Real-time transcription requires upgraded AssemblyAI plan - recording analysis will work',
-                            data: {
-                                callSid: callSid,
-                                error: 'Real-time streaming not available on current plan',
-                                solution: 'Upgrade to Pro plan for real-time features or use post-call recording analysis',
-                                fallback: 'Call recording will be analyzed after completion',
-                                timestamp: new Date().toISOString()
-                            }
-                        });
-                        break;
-                    case 4102:
-                        closeMessage = 'RATE LIMIT ERROR - Too many requests';
-                        console.error('❌ CRITICAL: AssemblyAI rate limit exceeded');
-                        break;
-                    case 4103:
-                        closeMessage = 'CONFIGURATION ERROR - Invalid parameters';
-                        console.error('❌ CRITICAL: Invalid AssemblyAI configuration parameters');
-                        break;
-                    default:
-                        closeMessage = `Unknown close code: ${code}`;
-                        if (code >= 4000) {
-                            console.error('❌ CRITICAL: AssemblyAI specific error code:', code);
-                        }
-                }
-                
-                console.log(`DEBUG Enhanced close analysis: ${closeMessage}`);
-                
-                // Broadcast enhanced close info to dashboard
-                broadcastToClients({
-                    type: 'assemblyai_closed',
-                    message: `Enhanced AssemblyAI connection closed: ${closeMessage} (code: ${code})`,
-                    data: {
-                        callSid: callSid,
-                        closeCode: code,
-                        closeMessage: closeMessage,
-                        reason: reason.toString(),
-                        timestamp: new Date().toISOString(),
-                        enhanced_mode: true
-                    }
-                });
-            });
-            
-            // Add a timeout to detect if AssemblyAI is not responding
-            let lastTranscriptTime = Date.now();
-            let messageCount = 0;
-            let transcriptTimeout = setInterval(() => {
-                const timeSinceLastTranscript = Date.now() - lastTranscriptTime;
-                if (timeSinceLastTranscript > 8000 && mediaPacketCount > 100) { // 8 seconds without any message
-                    console.log(`WARNING No AssemblyAI messages for 8+ seconds (packets sent: ${mediaPacketCount}, messages received: ${messageCount})`);
-                    console.log(`DEBUG Socket state: ${assemblyAIWS.readyState}, Time since last: ${Math.round(timeSinceLastTranscript/1000)}s`);
-                }
-            }, 4000);
-            
-            // Clear transcript timeout on close
-            assemblyAIWS.on('close', () => {
-                if (transcriptTimeout) {
-                    clearInterval(transcriptTimeout);
-                }
-            });
-            
-        } catch (error) {
-            console.error('ERROR FAILED TO CREATE ASSEMBLYAI SESSION:', error);
-            console.error('DEBUG Error details:', error.message);
-            console.error('DEBUG Error stack:', error.stack);
-            
-            // Fallback to Deepgram for real-time transcription
-            console.log('🔄 FALLBACK: Switching to Deepgram for real-time transcription...');
-            initializeDeepgramRealtime(callSid, ws);
-        }
     } else {
-        console.log('❌ WARNING: No transcription service available - neither AssemblyAI nor Deepgram configured');
+        console.log('❌ WARNING: No Deepgram API key configured');
         broadcastToClients({
             type: 'transcription_unavailable',
             message: 'No real-time transcription available - will analyze recording after call',
             data: {
                 callSid: callSid,
-                error: 'No API keys configured',
+                error: 'No Deepgram API key configured',
                 fallbackMethod: 'post_call_recording_analysis',
                 timestamp: new Date().toISOString()
             }
@@ -1450,8 +1046,7 @@ function handleTwilioStreamConnection(ws, req) {
                 case 'start':
                     console.log('STREAM STREAM STARTED for call:', callSid);
                     console.log('INFO Stream details:', JSON.stringify(data.start, null, 2));
-                    console.log('DEBUG AssemblyAI socket status:', assemblyAISocket ? 'EXISTS' : 'MISSING');
-                    console.log('DEBUG AssemblyAI ready state:', assemblyAISocket ? assemblyAISocket.readyState : 'N/A');
+                    console.log('DEBUG Deepgram connection:', ws.deepgramLive ? 'EXISTS' : 'MISSING');
                     
                     activeStreams.set(callSid, {
                         callSid: callSid,
@@ -1477,7 +1072,6 @@ function handleTwilioStreamConnection(ws, req) {
                         console.log(`AUDIO FIRST AUDIO PACKET received from Twilio`);
                         console.log(`DEBUG Audio data length: ${data.media.payload ? data.media.payload.length : 'NO PAYLOAD'}`);
                         console.log(`DEBUG Audio sequence: ${data.media.sequence}`);
-                        console.log(`DEBUG AssemblyAI socket state: ${assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET'}`);
                         console.log(`DEBUG Deepgram connection: ${ws.deepgramLive ? 'EXISTS' : 'MISSING'}`);
                     }
                     
@@ -1486,29 +1080,27 @@ function handleTwilioStreamConnection(ws, req) {
                         try {
                             const audioData = Buffer.from(data.media.payload, 'base64');
                             
-                                                         if (ws.deepgramConnected()) {
-                                 ws.deepgramLive.send(audioData);
-                                 
-                                 if (mediaPacketCount === 1) {
-                                     console.log(`✅ DEEPGRAM: First audio packet sent (${audioData.length} bytes)`);
-                                     
-                                     // Analyze first audio packet for debugging
-                                     let nonZeroBytes = 0;
-                                     let maxValue = 0;
-                                     for (let i = 0; i < Math.min(audioData.length, 50); i++) {
-                                         if (audioData[i] !== 0 && audioData[i] !== 127 && audioData[i] !== 255) nonZeroBytes++;
-                                         maxValue = Math.max(maxValue, audioData[i]);
-                                     }
-                                     console.log(`🔊 DEEPGRAM AUDIO ANALYSIS: ${nonZeroBytes}/50 meaningful bytes, max: ${maxValue}`);
-                                     console.log(`🧪 DEEPGRAM: Expecting results within 2-3 seconds...`);
-                                 }
-                                 
-                                 // Log progress every 300 packets and check for results
-                                 if (mediaPacketCount % 300 === 0) {
-                                     console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
-                                     console.log(`⚠️ DEEPGRAM DEBUG: If no results received yet, there may be a connection issue`);
-                                 }
-                             } else {
+                            if (ws.deepgramConnected()) {
+                                ws.deepgramLive.send(audioData);
+                                
+                                if (mediaPacketCount === 1) {
+                                    console.log(`✅ DEEPGRAM: First audio packet sent (${audioData.length} bytes)`);
+                                    
+                                    // Analyze first audio packet for debugging
+                                    let nonZeroBytes = 0;
+                                    let maxValue = 0;
+                                    for (let i = 0; i < Math.min(audioData.length, 50); i++) {
+                                        if (audioData[i] !== 0 && audioData[i] !== 127 && audioData[i] !== 255) nonZeroBytes++;
+                                        maxValue = Math.max(maxValue, audioData[i]);
+                                    }
+                                }
+                                
+                                // Log progress every 300 packets and check for results
+                                if (mediaPacketCount % 300 === 0) {
+                                    console.log(`🎙️ DEEPGRAM: ${mediaPacketCount} audio packets sent`);
+                                    console.log(`⚠️ DEEPGRAM DEBUG: If no results received yet, there may be a connection issue`);
+                                }
+                            } else {
                                 // Buffer audio until connected
                                 if (ws.deepgramBuffer) {
                                     ws.deepgramBuffer.push(audioData);
@@ -1521,141 +1113,12 @@ function handleTwilioStreamConnection(ws, req) {
                             console.error('❌ Deepgram audio forwarding error:', deepgramError.message);
                         }
                     }
-                    
-                    
-                    // Enhanced audio forwarding to AssemblyAI for maximum accuracy
-                    if (assemblyAISocket && (assemblyAISocket.readyState === 1 || assemblyAISocket.readyState === 0) && data.media.payload && twimlFinished) {
-                        try {
-                            // Enhanced audio processing with quality optimization
-                            const audioData = data.media.payload;
-                            
-                            // Enhanced audio validation to prevent garbage
-                            if (audioData.length < 20) {
-                                if (mediaPacketCount % 100 === 0) {
-                                    console.log('FILTERED Skipping very small audio packet:', audioData.length);
-                                }
-                                return;
-                            }
-                            
-                            // Additional validation: check for valid base64
-                            try {
-                                Buffer.from(audioData, 'base64');
-                            } catch (base64Error) {
-                                console.log('FILTERED Invalid base64 audio data');
-                                return;
-                            }
-                            
-                            // Send OPTIMIZED audio message to AssemblyAI for phone calls
-                            if (assemblyAISocket.readyState === 1) {
-                                // Enhanced mulaw audio processing for phone calls
-                                const audioBuffer = Buffer.from(audioData, 'base64');
-                                
-                                // Advanced audio quality analysis for phone calls
-                                if (mediaPacketCount === 1) {
-                                    let nonZeroBytes = 0;
-                                    let maxValue = 0;
-                                    let avgValue = 0;
-                                    let variation = 0;
-                                    
-                                    for (let i = 0; i < Math.min(audioBuffer.length, 50); i++) {
-                                        if (audioBuffer[i] !== 0 && audioBuffer[i] !== 127 && audioBuffer[i] !== 255) nonZeroBytes++;
-                                        maxValue = Math.max(maxValue, audioBuffer[i]);
-                                        avgValue += audioBuffer[i];
-                                    }
-                                    avgValue /= Math.min(audioBuffer.length, 50);
-                                    
-                                    // Calculate variation for voice detection
-                                    for (let i = 0; i < Math.min(audioBuffer.length, 50); i++) {
-                                        variation += Math.abs(audioBuffer[i] - avgValue);
-                                    }
-                                    variation /= Math.min(audioBuffer.length, 50);
-                                    
-                                    console.log(`🔊 PHONE AUDIO ANALYSIS: ${nonZeroBytes}/50 meaningful bytes, max: ${maxValue}, avg: ${avgValue.toFixed(1)}, variation: ${variation.toFixed(1)}`);
-                                    
-                                    if (nonZeroBytes < 15 || variation < 5) {
-                                        console.log(`⚠️ WARNING: Audio appears to be low quality or mostly silence`);
-                                    } else {
-                                        console.log(`✅ GOOD: Audio has sufficient variation for voice recognition`);
-                                    }
-                                }
-                                
-                                // Enhanced mulaw to PCM conversion with phone call optimization
-                                const pcmBuffer = convertMulawToPcm(audioBuffer);
-                                const pcmBase64 = pcmBuffer.toString('base64');
-                                
-                                // Enhanced debugging for phone call audio
-                                if (mediaPacketCount === 1) {
-                                    console.log(`🔊 PHONE PCM CONVERSION: ${audioBuffer.length} mulaw → ${pcmBuffer.length} PCM bytes`);
-                                    const samples = [];
-                                    for (let i = 0; i < Math.min(20, pcmBuffer.length); i += 2) {
-                                        samples.push(pcmBuffer.readInt16LE(i));
-                                    }
-                                    console.log(`🔊 PCM sample range: [${Math.min(...samples)} to ${Math.max(...samples)}]`);
-                                }
-                                
-                                // Optimized audio message for phone call transcription
-                                const phoneOptimizedAudioMessage = {
-                                    audio_data: pcmBase64
-                                };
-                                
-                                assemblyAISocket.send(JSON.stringify(phoneOptimizedAudioMessage));
-                                
-                                if (mediaPacketCount === 1) {
-                                    console.log(`SUCCESS ASSEMBLYAI: First audio packet sent (mulaw ${audioBuffer.length}→PCM ${pcmBuffer.length} bytes)`);
-                                    console.log('CONFIG AssemblyAI format: mulaw→PCM converted, sample rate: 8000Hz, word boosted');
-                                } else if (mediaPacketCount <= 5) {
-                                    console.log(`ASSEMBLYAI: Packet ${mediaPacketCount} sent (${audioBuffer.length}→${pcmBuffer.length} bytes)`);
-                                }
-                                
-                                // Enhanced monitoring every 300 packets (more frequent)
-                                if (mediaPacketCount % 300 === 0) {
-                                    console.log(`AUDIO Enhanced audio packets sent: ${mediaPacketCount} (mulaw→PCM converted stream active)`);
-                                }
-                            } else if (assemblyAISocket.readyState === 0) {
-                                // Socket still connecting - we'll retry when it's ready
-                                if (mediaPacketCount === 1) {
-                                    console.log('WAITING AssemblyAI socket still connecting, audio will be sent when ready...');
-                                }
-                                // We could buffer audio here if needed, but for real-time it's better to start fresh when connected
-                            }
-                        } catch (audioError) {
-                            console.error('ERROR Enhanced audio forwarding error:', audioError.message);
-                            console.error('DEBUG AssemblyAI socket state:', assemblyAISocket ? assemblyAISocket.readyState : 'NO SOCKET');
-                            
-                            // Attempt to reconnect if socket is in bad state
-                            if (assemblyAISocket && assemblyAISocket.readyState === 3) {
-                                console.log('SHUTDOWN Attempting to reconnect enhanced AssemblyAI socket...');
-                                // Note: In production, implement reconnection logic here
-                            }
-                        }
-                    } else if (!twimlFinished) {
-                        if (mediaPacketCount === 1) {
-                            console.log('WAITING Enhanced mode: Waiting for TwiML to finish (avoiding echo)');
-                        }
-                    } else if (!assemblyAISocket) {
-                        if (mediaPacketCount === 1) {
-                            console.log('WARNING Enhanced mode: No AssemblyAI socket available');
-                        }
-                    } else if (assemblyAISocket.readyState !== 1 && assemblyAISocket.readyState !== 0) {
-                        if (mediaPacketCount === 1) {
-                            console.log(`WARNING Enhanced mode: AssemblyAI socket in bad state (state: ${assemblyAISocket.readyState})`);
-                            console.log(`DEBUG Socket states: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED`);
-                        }
-                    } else if (!data.media.payload) {
-                        if (mediaPacketCount === 1) {
-                            console.log('WARNING Enhanced mode: No audio payload in media packet');
-                        }
-                    }
+
                     break;
                     
                 case 'stop':
                     console.log('STREAM STREAM STOPPED for call:', callSid);
                     console.log(`STATS Total audio packets received: ${mediaPacketCount}`);
-                    
-                    if (assemblyAISocket) {
-                        console.log('SOCKET Closing AssemblyAI session...');
-                        assemblyAISocket.close();
-                    }
                     
                     if (ws.deepgramLive) {
                         console.log('🛑 DEEPGRAM: Finishing transcription session...');
@@ -1722,9 +1185,6 @@ function handleTwilioStreamConnection(ws, req) {
     
     ws.on('close', () => {
         console.log(`STREAM Stream connection closed for call: ${callSid}`);
-        if (assemblyAISocket) {
-            assemblyAISocket.close();
-        }
         activeStreams.delete(callSid);
     });
     
@@ -1735,143 +1195,27 @@ function handleTwilioStreamConnection(ws, req) {
 
 // Test current transcription service priority
 app.get('/test/transcription-priority', (req, res) => {
-    const hasAssemblyAI = !!process.env.ASSEMBLYAI_API_KEY;
     const hasDeepgram = !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey);
     
-    let primaryService = 'none';
-    if (hasAssemblyAI) {
-        primaryService = 'AssemblyAI';
-    } else if (hasDeepgram) {
-        primaryService = 'Deepgram';
-    }
+    let primaryService = hasDeepgram ? 'Deepgram' : 'none';
     
     res.json({
         primary_service: primaryService,
         services_available: {
-            assemblyai: hasAssemblyAI,
             deepgram: hasDeepgram
         },
         api_keys: {
-            assemblyai_configured: hasAssemblyAI,
-            assemblyai_length: process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0,
             deepgram_configured: hasDeepgram,
             deepgram_is_hardcoded: !!deepgramApiKey
         },
-        recommendation: hasAssemblyAI ? 
-            'AssemblyAI will be used for real-time transcription' : 
-            'Configure ASSEMBLYAI_API_KEY for better accuracy',
+        recommendation: hasDeepgram ? 
+            'Deepgram will be used for real-time transcription' : 
+            'Configure DEEPGRAM_API_KEY for real-time transcription',
         timestamp: new Date().toISOString()
     });
 });
 
-// Test AssemblyAI connection endpoint
-app.post('/test/assemblyai', async (req, res) => {
-    console.log('🧪 Testing AssemblyAI connection...');
-    
-    if (!process.env.ASSEMBLYAI_API_KEY) {
-        return res.json({
-            success: false,
-            error: 'No AssemblyAI API key configured'
-        });
-    }
-    
-    try {
-        // Test the API key with a simple request
-        const response = await fetch('https://api.assemblyai.com/v2/transcript', {
-            method: 'POST',
-            headers: {
-                'Authorization': process.env.ASSEMBLYAI_API_KEY,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                audio_url: 'https://storage.googleapis.com/aai-docs-samples/nbc.wav'
-            })
-        });
-        
-        const data = await response.json();
-        console.log('SUCCESS AssemblyAI API test response:', data);
-        
-        res.json({
-            success: response.ok,
-            status: response.status,
-            api_key_valid: response.ok,
-            api_key_length: process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.length : 0,
-            api_key_prefix: process.env.ASSEMBLYAI_API_KEY ? process.env.ASSEMBLYAI_API_KEY.substring(0, 10) + '...' : 'N/A',
-            response: data
-        });
-    } catch (error) {
-        console.error('ERROR AssemblyAI API test failed:', error);
-        res.json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
-// Test real-time WebSocket connection to AssemblyAI
-app.get('/test/assemblyai-ws', (req, res) => {
-    console.log('🧪 Testing AssemblyAI WebSocket connection...');
-    
-    if (!process.env.ASSEMBLYAI_API_KEY) {
-        return res.json({
-            success: false,
-            error: 'No AssemblyAI API key configured'
-        });
-    }
-    
-    try {
-        const WS = require('ws');
-        const testSocket = new WS('wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000&disable_partial_transcripts=false&speech_threshold=0.2', {
-            headers: {
-                'Authorization': process.env.ASSEMBLYAI_API_KEY
-            }
-        });
-        
-        let result = { success: false, messages: [] };
-        
-        testSocket.on('open', () => {
-            console.log('SUCCESS AssemblyAI WebSocket test connection opened');
-            result.messages.push('WebSocket connection opened successfully');
-            result.success = true;
-            
-            // Close test connection after 2 seconds
-            setTimeout(() => {
-                testSocket.close();
-                res.json(result);
-            }, 2000);
-        });
-        
-        testSocket.on('message', (data) => {
-            const message = JSON.parse(data);
-            console.log('📥 AssemblyAI test message:', message);
-            result.messages.push(`Received: ${message.message_type || 'unknown'}`);
-        });
-        
-        testSocket.on('error', (error) => {
-            console.error('ERROR AssemblyAI WebSocket test error:', error);
-            result.success = false;
-            result.error = error.message;
-            res.json(result);
-        });
-        
-        // Timeout after 5 seconds
-        setTimeout(() => {
-            if (!res.headersSent) {
-                testSocket.close();
-                result.success = false;
-                result.error = 'Connection timeout';
-                res.json(result);
-            }
-        }, 5000);
-        
-    } catch (error) {
-        console.error('ERROR AssemblyAI WebSocket test failed:', error);
-        res.json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
 // Email extraction and validation functions
 function extractEmailFromTranscript(transcript) {
@@ -2218,7 +1562,7 @@ app.get('/twilio-config', (req, res) => {
                 node_env: NODE_ENV,
                 twilio_configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
                 openai_configured: !!process.env.OPENAI_API_KEY,
-                assemblyai_configured: !!process.env.ASSEMBLYAI_API_KEY,
+                deepgram_configured: !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey),
                 n8n_configured: !!process.env.N8N_WEBHOOK_URL
             },
             websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`,
@@ -2597,38 +1941,13 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
             console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio`);
         }
         
-        // Upload to AssemblyAI for transcription
-        console.log('📤 Uploading to AssemblyAI for transcription...');
-        const uploadUrl = await assemblyAI.files.upload(audioBuffer);
-        
-        // Transcribe with speaker labels and advanced features
-        const transcript = await assemblyAI.transcripts.create({
-            audio_url: uploadUrl,
-            language_detection: true,
-            speaker_labels: true,
-            speakers_expected: 2, // Expecting 2 speakers in bridge call
-            sentiment_analysis: true,
-            entity_detection: true,
-            auto_chapters: true,
-            summarization: true,
-            summary_model: 'conversational',
-            summary_type: 'bullets'
-        });
-        
-        // Wait for transcription to complete
-        let transcriptResult = transcript;
-        while (transcriptResult.status !== 'completed' && transcriptResult.status !== 'error') {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            transcriptResult = await assemblyAI.transcripts.get(transcript.id);
-            console.log('⏳ Transcription status:', transcriptResult.status);
-        }
-        
-        if (transcriptResult.status === 'error') {
-            throw new Error(`Transcription failed: ${transcriptResult.error}`);
-        }
-        
-        console.log('✅ Bridge call transcription completed!');
-        console.log('🗣️ CONVERSATION TRANSCRIPT:', transcriptResult.text);
+        // For now, return basic analysis without transcription
+        // TODO: Implement Deepgram transcription for bridge recordings
+        console.log('⚠️ Bridge call recording transcription not implemented with Deepgram yet');
+        const transcriptResult = {
+            text: 'Bridge call recording analysis not yet implemented with Deepgram',
+            status: 'completed'
+        };
         
         // Analyze with OpenAI for meeting insights
         console.log('🧠 Analyzing bridge conversation with OpenAI...');
