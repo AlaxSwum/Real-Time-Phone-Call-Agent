@@ -21,9 +21,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const assemblyAI = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
 // Initialize Deepgram client for real-time transcription
-const deepgramApiKey = null; // TEMPORARILY DISABLED - force AssemblyAI usage
-console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'DISABLED - will use AssemblyAI');
-const deepgram = deepgramApiKey ? createClient(deepgramApiKey) : null;
+const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '74f56f021ad1d3f0f27739eba81cd1216fcd812c';
+console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
+const deepgram = createClient(deepgramApiKey);
 
 // Environment configuration
 const PORT = process.env.PORT || 3000;
@@ -1057,7 +1057,7 @@ function handleTwilioStreamConnection(ws, req) {
     console.log(`🔍 TRANSCRIPTION SERVICE DEBUG:`);
     console.log(`  - AssemblyAI available: ${hasAssemblyAI} (API key: ${hasAssemblyAI ? 'SET' : 'MISSING'})`);
     console.log(`  - Deepgram available: ${hasDeepgram} (API key: ${hasDeepgram ? 'SET' : 'MISSING'})`);
-    console.log(`  - Will use: ${hasAssemblyAI ? 'ASSEMBLYAI' : hasDeepgram ? 'DEEPGRAM' : 'NONE'}`);
+    console.log(`  - Will use: ${hasDeepgram ? 'DEEPGRAM' : hasAssemblyAI ? 'ASSEMBLYAI' : 'NONE'}`);
     
     // Initialize variables for this stream
     let assemblyAISocket = null;
@@ -1066,8 +1066,11 @@ function handleTwilioStreamConnection(ws, req) {
     let messageCount = 0;
     let transcriptTimeout = null;
     
-    // Use AssemblyAI as primary real-time transcription service for better accuracy
-    if (process.env.ASSEMBLYAI_API_KEY) {
+    // Use Deepgram as primary real-time transcription service
+    if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
+        console.log('🎙️ Using Deepgram as primary real-time transcription service...');
+        initializeDeepgramRealtime(callSid, ws);
+    } else if (false && process.env.ASSEMBLYAI_API_KEY) { // AssemblyAI disabled
         console.log('AI Creating AssemblyAI real-time session...');
         console.log('API Using API key:', process.env.ASSEMBLYAI_API_KEY ? 'SET' : 'NOT SET');
         try {
@@ -1412,9 +1415,6 @@ function handleTwilioStreamConnection(ws, req) {
             console.log('🔄 FALLBACK: Switching to Deepgram for real-time transcription...');
             initializeDeepgramRealtime(callSid, ws);
         }
-    } else if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
-        console.log('🔄 FALLBACK: Using Deepgram for real-time transcription (no AssemblyAI key)');
-        initializeDeepgramRealtime(callSid, ws);
     } else {
         console.log('❌ WARNING: No transcription service available - neither AssemblyAI nor Deepgram configured');
         broadcastToClients({
@@ -2720,8 +2720,8 @@ function initializeDeepgramRealtime(callSid, ws) {
     }
     
     try {
-        // Create Deepgram live connection with minimal config for stability
-        console.log('🔗 Creating Deepgram connection with minimal config...');
+        // Create Deepgram live connection with optimized phone call config
+        console.log('🔗 Creating Deepgram connection with phone-optimized config...');
         const deepgramLive = deepgram.listen.live({
             model: 'nova-2',
             language: 'en-US',
@@ -2759,17 +2759,20 @@ function initializeDeepgramRealtime(callSid, ws) {
 
         deepgramLive.on('open', () => {
             console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
+            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, mulaw encoding, 8kHz sample rate');
             isConnected = true;
             clearTimeout(connectionTimeout);
             
             // Broadcast connection success
             broadcastToClients({
                 type: 'deepgram_connected',
-                message: 'Deepgram real-time transcription ready',
+                message: 'Deepgram real-time transcription ready (nova-2 model)',
                 data: {
                     callSid: callSid,
                     provider: 'deepgram',
                     model: 'nova-2',
+                    encoding: 'mulaw',
+                    sample_rate: 8000,
                     timestamp: new Date().toISOString()
                 }
             });
@@ -2783,7 +2786,9 @@ function initializeDeepgramRealtime(callSid, ws) {
         });
 
         deepgramLive.on('results', (data) => {
-            console.log('📥 DEEPGRAM RAW RESULT:', JSON.stringify(data, null, 2));
+            console.log('📥 DEEPGRAM RAW RESULT received for call:', callSid);
+            console.log('🔍 DEEPGRAM RESULT TYPE:', data.type || 'unknown');
+            console.log('📄 DEEPGRAM FULL RESULT:', JSON.stringify(data, null, 2));
             
             if (data.channel && data.channel.alternatives && data.channel.alternatives[0]) {
                 const transcript = data.channel.alternatives[0];
@@ -2794,8 +2799,8 @@ function initializeDeepgramRealtime(callSid, ws) {
                     
                     console.log(`🎯 DEEPGRAM TRANSCRIPT: "${transcript.transcript}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
                     
-                    // Filter low quality transcripts
-                    if (confidence > 0.2 && transcript.transcript.trim().length > 1) {
+                    // Filter low quality transcripts (reduced thresholds for better detection)
+                    if (confidence > 0.1 && transcript.transcript.trim().length > 0) {
                         console.log(`✅ DEEPGRAM ACCEPTED: "${transcript.transcript}"`);
                         
                         // Add to full transcript if final
