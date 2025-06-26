@@ -981,7 +981,7 @@ function handleDashboardConnection(ws, req) {
 }
 
 // Twilio Media Stream WebSocket handler  
-function handleTwilioStreamConnection(ws, req) {
+async function handleTwilioStreamConnection(ws, req) {
     // Extract callSid from URL - supports both formats
     let callSid = '';
     if (req.url.includes('callSid=')) {
@@ -1010,7 +1010,7 @@ function handleTwilioStreamConnection(ws, req) {
     // Use Deepgram for real-time transcription service
     if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
         console.log('🎙️ Using Deepgram for real-time transcription service...');
-        initializeDeepgramRealtime(callSid, ws);
+        await initializeDeepgramRealtime(callSid, ws);
     } else {
         console.log('❌ WARNING: No Deepgram API key configured');
         broadcastToClients({
@@ -2084,7 +2084,7 @@ function convertMulawToLinear16(mulawBuffer) {
 }
 
 // Deepgram real-time transcription initialization
-function initializeDeepgramRealtime(callSid, ws) {
+async function initializeDeepgramRealtime(callSid, ws) {
     console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
     console.log('🔑 Using Deepgram API Key:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
     
@@ -2104,8 +2104,36 @@ function initializeDeepgramRealtime(callSid, ws) {
     }
     
     try {
+        // Test API key validity first
+        console.log('🔑 TESTING API KEY VALIDITY before WebSocket connection...');
+        
+        try {
+            const testResponse = await fetch('https://api.deepgram.com/v1/projects', {
+                headers: {
+                    'Authorization': `Token ${deepgramApiKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            console.log(`🔑 API KEY TEST: ${testResponse.status} ${testResponse.statusText}`);
+            
+            if (!testResponse.ok) {
+                const errorText = await testResponse.text();
+                console.error(`❌ API KEY INVALID: ${testResponse.status} - ${errorText}`);
+                throw new Error(`Invalid Deepgram API key: ${testResponse.status} ${testResponse.statusText}`);
+            }
+            
+            const projectData = await testResponse.json();
+            console.log('✅ API KEY VALID - Projects accessible:', projectData.projects?.length || 0);
+            
+        } catch (apiError) {
+            console.error('❌ API KEY TEST FAILED:', apiError.message);
+            console.log('⚠️ Proceeding with WebSocket connection anyway...');
+            // Don't throw - try the WebSocket connection anyway
+        }
+        
         // Create Deepgram live connection with ENHANCED TROUBLESHOOTING
-        console.log('🔗 Creating Deepgram connection with ENHANCED TROUBLESHOOTING...');
+        console.log('🔗 Creating Deepgram WebSocket connection...');
         console.log('🔧 TESTING: mulaw → linear16 with 8kHz → 16kHz upsampling...');
         console.log('🎯 MODEL: Using enhanced-general model for better compatibility...');
         const deepgramLive = deepgram.listen.live({
