@@ -1319,14 +1319,15 @@ function handleTwilioStreamConnection(ws, req) {
                         console.error('💡 Solution: Check your AssemblyAI account at https://www.assemblyai.com/app');
                         console.error('💡 Note: Real-time transcription requires higher tier than basic transcription');
                         
-                        // Broadcast helpful error message to dashboard
+                        // Broadcast helpful error message to dashboard with specific solution
                         broadcastToClients({
                             type: 'assemblyai_quota_error',
-                            message: 'AssemblyAI quota exceeded or invalid API key - check your account',
+                            message: 'Real-time transcription requires upgraded AssemblyAI plan - recording analysis will work',
                             data: {
                                 callSid: callSid,
-                                error: 'Quota exceeded or invalid key',
-                                solution: 'Visit https://www.assemblyai.com/app to check your account',
+                                error: 'Real-time streaming not available on current plan',
+                                solution: 'Upgrade to Pro plan for real-time features or use post-call recording analysis',
+                                fallback: 'Call recording will be analyzed after completion',
                                 timestamp: new Date().toISOString()
                             }
                         });
@@ -1399,6 +1400,17 @@ function handleTwilioStreamConnection(ws, req) {
         }
     } else {
         console.log('WARNING NO ASSEMBLYAI API KEY - Real-time transcription disabled');
+        
+        // Broadcast that we'll use post-call analysis instead
+        broadcastToClients({
+            type: 'transcription_fallback',
+            message: 'Real-time transcription unavailable - will analyze recording after call',
+            data: {
+                callSid: callSid,
+                fallbackMethod: 'post_call_recording_analysis',
+                timestamp: new Date().toISOString()
+            }
+        });
     }
     
     let mediaPacketCount = 0;
