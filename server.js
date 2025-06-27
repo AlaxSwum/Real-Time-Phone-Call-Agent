@@ -2753,15 +2753,15 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     
     // Optimized processing: Every 2 seconds for real-time, but accumulate for complete sentences
     ws.chunkProcessor = setInterval(async () => {
-        // SINGLE SPEAKER OPTIMIZATION: Faster processing for better responsiveness
-        const minAudioLength = 6000; // 0.75 seconds at 8kHz (faster for single speaker)
-        const preferredAudioLength = 20000; // 2.5 seconds at 8kHz (optimal for sentence completion)
+        // 🎯 5-SECOND OPTIMIZATION: Better accuracy with complete sentences
+        const minAudioLength = 16000; // 2 seconds at 8kHz (minimum for processing)
+        const preferredAudioLength = 40000; // 5 seconds at 8kHz (optimal for complete sentences)
         const timeSinceLastProcess = Date.now() - ws.lastProcessTime;
         
-        // Process if we have enough audio OR if it's been too long since last processing
-        // More aggressive processing for single speaker scenarios
+        // Process every 5 seconds OR when we have substantial audio accumulated
+        // Prioritize complete sentences over speed for better accuracy
         const shouldProcess = ws.chunkBuffer.length >= minAudioLength && 
-                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 2500);
+                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 5000);
         
         if (shouldProcess) {
             try {
@@ -3015,11 +3015,11 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             console.log(`📝 ACCUMULATING: "${processedText}" (waiting for complete sentences)`);
                         }
                         
-                        // ENHANCED SENTENCE COMPLETION: More aggressive timeout for better flow
+                        // ENHANCED SENTENCE COMPLETION: 5-second timeout for complete sentences
                         const timeSinceLastTranscript = Date.now() - ws.lastTranscriptTime;
                         
-                        // Force output with shorter timeout for better user experience
-                        if (ws.sentenceBuffer.length > 15 && timeSinceLastTranscript > 5000) {
+                        // Force output after 7 seconds to allow for complete sentence accumulation
+                        if (ws.sentenceBuffer.length > 20 && timeSinceLastTranscript > 7000) {
                             // Try to create a sentence by adding punctuation if missing
                             let forcedSentence = ws.sentenceBuffer.trim();
                             if (!forcedSentence.match(/[.!?]$/)) {
@@ -3064,7 +3064,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                 forcedSentence = combinedText; // Use combined text for broadcast
                             }
                             
-                            console.log(`⏰ SMART TIMEOUT: "${forcedSentence}" (${timeSinceLastTranscript}ms wait, ${ws.sentenceBuffer.length} chars)`);
+                            console.log(`⏰ 5-SECOND TIMEOUT: "${forcedSentence}" (${timeSinceLastTranscript}ms wait, ${ws.sentenceBuffer.length} chars)`);
                             
                             broadcastToClients({
                                 type: 'live_transcript',
@@ -3072,12 +3072,12 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                 data: {
                                     callSid: callSid,
                                     text: forcedSentence,
-                                    confidence: confidence * 0.85, // Higher confidence for smart timeout
+                                    confidence: confidence * 0.9, // Higher confidence for 5-second timeout
                                     is_final: true,
-                                    provider: 'assemblyai_http_smart_timeout',
+                                    provider: 'assemblyai_http_5_second_timeout',
                                     forced_output: true,
                                     timeout_ms: timeSinceLastTranscript,
-                                    enhanced_completion: true,
+                                    processing_mode: '5_second_complete_sentences',
                                     timestamp: new Date().toISOString()
                                 }
                             });
@@ -3119,20 +3119,20 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 ws.lastProcessTime = Date.now();
             }
         }
-    }, 1200); // Check every 1.2 seconds for faster single speaker response
+    }, 2000); // Check every 2 seconds for 5-second processing cycles
     
-    console.log('✅ MAXIMUM ACCURACY AUDIO TRANSCRIPTION initialized');
-    console.log('🎯 AGGRESSIVE BOOSTING: Custom vocabulary + comprehensive word boosting');
-    console.log('🔧 ULTRA-ENHANCED: 40+ boosted terms + advanced email pattern detection');
-    console.log('⚡ MAXIMUM ACCURACY: Best possible transcription with speech-to-text error correction');
+    console.log('✅ ENHANCED ACCURACY: 5-second audio processing initialized');
+    console.log('🎯 COMPLETE SENTENCES: Prioritizing sentence completion over speed');
+    console.log('🔧 OPTIMIZED TIMING: 5-second intervals for better accuracy');
+    console.log('⚡ ENHANCED QUALITY: Reduced fragmentation with longer processing windows');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'MAXIMUM ACCURACY: Aggressive boosting + ultra-enhanced email detection (Railway + AssemblyAI)',
+        message: 'ENHANCED ACCURACY: 5-second processing + complete sentence detection (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'maximum_accuracy_aggressive_boosting',
-            interval: '2-3_seconds',
+            method: 'enhanced_accuracy_5_second_processing',
+            interval: '5_seconds',
             config: 'maximum_accuracy',
             features: [
                 'audio_to_text',
