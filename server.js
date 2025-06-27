@@ -2324,12 +2324,12 @@ function convertMulawToLinear16(mulawBuffer) {
         const mulawValue = mulawBuffer[i];
         const linearValue = mulawToLinear[mulawValue];
         
-        // Apply gentler noise gate for phone calls (preserve more audio)
-        let cleanedValue = Math.abs(linearValue) < 20 ? 0 : linearValue;
+        // Apply minimal noise gate for maximum speech capture
+        let cleanedValue = Math.abs(linearValue) < 5 ? 0 : linearValue;
         
-        // Amplify low-volume phone audio (boost by 1.5x for better recognition)
+        // Amplify low-volume phone audio (boost by 2x for maximum sensitivity)
         if (cleanedValue !== 0) {
-            cleanedValue = Math.round(cleanedValue * 1.5);
+            cleanedValue = Math.round(cleanedValue * 2.0);
             // Prevent clipping
             cleanedValue = Math.max(-32767, Math.min(32767, cleanedValue));
         }
@@ -2341,11 +2341,11 @@ function convertMulawToLinear16(mulawBuffer) {
         // Interpolate next sample for smoother upsampling
         const nextMulawValue = i < mulawBuffer.length - 1 ? mulawBuffer[i + 1] : mulawValue;
         const nextLinearValue = mulawToLinear[nextMulawValue];
-        let nextCleanedValue = Math.abs(nextLinearValue) < 20 ? 0 : nextLinearValue;
+        let nextCleanedValue = Math.abs(nextLinearValue) < 5 ? 0 : nextLinearValue;
         
         // Amplify next sample too
         if (nextCleanedValue !== 0) {
-            nextCleanedValue = Math.round(nextCleanedValue * 1.5);
+            nextCleanedValue = Math.round(nextCleanedValue * 2.0);
             nextCleanedValue = Math.max(-32767, Math.min(32767, nextCleanedValue));
         }
         const interpolatedValue = Math.round((cleanedValue + nextCleanedValue) / 2);
@@ -2377,7 +2377,7 @@ function analyzeAudioQuality(audioBuffer) {
         min = Math.min(min, sample);
         max = Math.max(max, sample);
         
-        if (Math.abs(sample) < 100) { // Very quiet threshold
+        if (Math.abs(sample) < 30) { // Lower threshold for phone calls
             silentSamples++;
         }
     }
@@ -2421,10 +2421,10 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         ws.audioBuffer = []; // Clear the buffer
     }
     
-    // Process audio chunks every 3 seconds for better accuracy (longer context)
+    // Process audio chunks every 2 seconds for faster response (capture more speech)
     ws.chunkProcessor = setInterval(async () => {
-        // Require minimum 0.75 seconds of audio (6000 bytes at 8kHz mulaw) for phone calls
-        if (ws.chunkBuffer.length >= 6000) {
+        // Require minimum 0.5 seconds of audio (4000 bytes at 8kHz mulaw) for faster capture
+        if (ws.chunkBuffer.length >= 4000) {
             try {
                 console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
                 
@@ -2592,17 +2592,17 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 console.error('❌ HTTP chunk processing error:', error.message);
             }
         }
-            }, 3000); // Process every 3 seconds for better accuracy
+            }, 2000); // Process every 2 seconds for faster response
     
-    console.log('✅ HTTP chunked processing initialized - will process audio every 3 seconds with maximum accuracy');
+    console.log('✅ HTTP chunked processing initialized - will process audio every 2 seconds with maximum sensitivity');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'HTTP-based transcription ready (3-second chunks with maximum accuracy)',
+        message: 'HTTP-based transcription ready (2-second chunks with maximum sensitivity)',
         data: {
             callSid: callSid,
             method: 'http_chunked',
-            interval: '3_seconds',
+            interval: '2_seconds',
             timestamp: new Date().toISOString()
         }
     });
