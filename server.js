@@ -1991,6 +1991,7 @@ function handleVoiceWebhook(req, res) {
         const streamUrl = `${baseWsUrl}/stream/${CallSid}`;
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
+        // Fixed TwiML with proper Stream configuration
         const bridgeTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Connecting your call, please wait...</Say>
@@ -2007,7 +2008,7 @@ function handleVoiceWebhook(req, res) {
     <Say voice="alice">The call could not be connected. Please try again later.</Say>
 </Response>`;
         
-        console.log('🌉 Bridge TwiML Response:', bridgeTwiML);
+        console.log('🌉 Bridge TwiML Response (WITH TRANSCRIPTION):', bridgeTwiML);
         res.type('text/xml');
         res.send(bridgeTwiML);
         
