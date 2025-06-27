@@ -9,11 +9,8 @@ const path = require('path');
 // AI Service imports
 const OpenAI = require('openai');
 
-// Deepgram for real-time transcription
-const { createClient } = require('@deepgram/sdk');
-
-// AssemblyAI for real-time transcription (alternative)
-const { RealtimeTranscriber } = require('assemblyai');
+// AssemblyAI for real-time transcription - MAXIMUM ACCURACY PROVIDER (93.3% accuracy!)
+const { AssemblyAI } = require('assemblyai');
 
 const app = express();
 const server = http.createServer(app);
@@ -33,10 +30,21 @@ try {
     openai = null;
 }
 
-// Initialize Deepgram client for real-time transcription
-const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '7fba0511f54adc490a379bd27cf84720b71ae433';
-console.log('🔑 Deepgram API Key configured:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
-const deepgram = createClient(deepgramApiKey);
+// Initialize AssemblyAI client for real-time transcription (MUCH MORE ACCURATE!)
+const assemblyAIApiKey = process.env.ASSEMBLYAI_API_KEY;
+console.log('🔑 AssemblyAI API Key configured:', assemblyAIApiKey ? `${assemblyAIApiKey.substring(0, 10)}...` : 'MISSING');
+
+if (!assemblyAIApiKey) {
+    console.error('❌ ASSEMBLYAI_API_KEY environment variable is required!');
+    console.error('🔧 Please set ASSEMBLYAI_API_KEY in your environment variables');
+    console.error('💡 Get your free API key at: https://www.assemblyai.com/');
+    console.error('💰 AssemblyAI is cheaper ($0.15/hour) and more accurate (93.3%) than Deepgram!');
+    process.exit(1);
+}
+
+const assemblyai = new AssemblyAI({
+    apiKey: assemblyAIApiKey
+});
 
 // Environment configuration
 const PORT = process.env.PORT || 3000;
@@ -49,7 +57,7 @@ console.log('  - NODE_ENV:', NODE_ENV);
 console.log('  - PORT:', PORT);
 console.log('🔍 All Environment Variables:');
 Object.keys(process.env).forEach(key => {
-    if (key.includes('BRIDGE') || key.includes('TWILIO') || key.includes('DEEPGRAM')) {
+    if (key.includes('BRIDGE') || key.includes('TWILIO') || key.includes('ASSEMBLYAI')) {
         console.log(`  - ${key}: ${process.env[key] ? process.env[key].substring(0, 10) + '...' : 'NOT SET'}`);
     }
 });
@@ -731,8 +739,8 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         environment: NODE_ENV,
         services: {
-            deepgram: {
-                configured: !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey),
+            assemblyai: {
+                configured: !!assemblyAIApiKey,
                 status: 'operational'
             },
             openai: {
@@ -1034,27 +1042,27 @@ async function handleTwilioStreamConnection(ws, req) {
     console.log(`BROADCAST Headers:`, req.headers);
     
     // DEBUG: Show transcription service selection logic
-    const hasDeepgram = !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey);
+    const hasAssemblyAI = !!assemblyAIApiKey;
     console.log(`🔍 TRANSCRIPTION SERVICE DEBUG:`);
-    console.log(`  - Deepgram available: ${hasDeepgram} (API key: ${hasDeepgram ? 'SET' : 'MISSING'})`);
-    console.log(`  - Will use: ${hasDeepgram ? 'DEEPGRAM' : 'NONE'}`);
+    console.log(`  - AssemblyAI available: ${hasAssemblyAI} (API key: ${hasAssemblyAI ? 'SET' : 'MISSING'})`);
+    console.log(`  - Will use: ${hasAssemblyAI ? 'AssemblyAI' : 'NONE'}`);
     
     // Initialize variables for this stream
     let fullTranscript = '';
     
-    // Use HTTP-only transcription (skip problematic WebSocket)
-    if (process.env.DEEPGRAM_API_KEY || deepgramApiKey) {
-        console.log('🎙️ Using HTTP-only transcription (bypassing WebSocket issues)...');
-        console.log('🔄 Initializing direct HTTP chunked processing...');
-        initializeHttpChunkedProcessing(callSid, ws);
+    // Try WebSocket first, fallback to HTTP if needed
+    if (assemblyAIApiKey) {
+        console.log('🎙️ Initializing AssemblyAI real-time transcription...');
+        console.log('🔄 Will try WebSocket first, fallback to HTTP chunked processing...');
+        initializeAssemblyAILive(callSid, ws);
     } else {
-        console.log('❌ WARNING: No Deepgram API key configured');
+        console.log('❌ WARNING: No AssemblyAI API key configured');
         broadcastToClients({
             type: 'transcription_unavailable',
             message: 'No real-time transcription available - will analyze recording after call',
             data: {
                 callSid: callSid,
-                error: 'No Deepgram API key configured',
+                error: 'No AssemblyAI API key configured',
                 fallbackMethod: 'post_call_recording_analysis',
                 timestamp: new Date().toISOString()
             }
@@ -1082,7 +1090,7 @@ async function handleTwilioStreamConnection(ws, req) {
                 case 'start':
                     console.log('STREAM STREAM STARTED for call:', callSid);
                     console.log('INFO Stream details:', JSON.stringify(data.start, null, 2));
-                    console.log('DEBUG Deepgram connection:', ws.deepgramLive ? 'EXISTS' : 'MISSING');
+                    console.log('DEBUG AssemblyAI connection:', ws.assemblyaiLive ? 'EXISTS' : 'MISSING');
                     
                     activeStreams.set(callSid, {
                         callSid: callSid,
@@ -1108,7 +1116,7 @@ async function handleTwilioStreamConnection(ws, req) {
                         console.log(`AUDIO FIRST AUDIO PACKET received from Twilio`);
                         console.log(`DEBUG Audio data length: ${data.media.payload ? data.media.payload.length : 'NO PAYLOAD'}`);
                         console.log(`DEBUG Audio sequence: ${data.media.sequence}`);
-                        console.log(`DEBUG Deepgram connection: ${ws.deepgramLive ? 'EXISTS' : 'MISSING'}`);
+                        console.log(`DEBUG AssemblyAI connection: ${ws.assemblyaiLive ? 'EXISTS' : 'MISSING'}`);
                     }
                     
                     // Handle audio processing (WebSocket or HTTP chunked fallback)
@@ -1117,12 +1125,12 @@ async function handleTwilioStreamConnection(ws, req) {
                             const mulawData = Buffer.from(data.media.payload, 'base64');
                             
                             // Try WebSocket first (using raw mulaw), fallback to HTTP chunked processing
-                            if (ws.deepgramLive && ws.deepgramConnected()) {
+                            if (ws.assemblyaiLive && ws.assemblyaiConnected()) {
                                 // WebSocket mode - send raw mulaw data
-                                ws.deepgramLive.send(mulawData);
+                                ws.assemblyaiLive.sendAudio(mulawData);
                                 
                                 if (mediaPacketCount === 1) {
-                                    console.log(`✅ DEEPGRAM WEBSOCKET: First mulaw packet sent (${mulawData.length} bytes)`);
+                                    console.log(`✅ ASSEMBLYAI WEBSOCKET: First mulaw packet sent (${mulawData.length} bytes)`);
                                     console.log(`🎯 USING RAW MULAW: No conversion for WebSocket mode`);
                                     
                                     // Analyze first audio packet for speech detection
@@ -1145,7 +1153,7 @@ async function handleTwilioStreamConnection(ws, req) {
                                 }
                                 
                                 if (mediaPacketCount % 300 === 0) {
-                                    console.log(`🎙️ DEEPGRAM WEBSOCKET: ${mediaPacketCount} mulaw packets sent`);
+                                    console.log(`🎙️ ASSEMBLYAI WEBSOCKET: ${mediaPacketCount} mulaw packets sent`);
                                     
                                     // Analyze audio quality every 300 packets
                                     let activeBytes = 0;
@@ -1208,9 +1216,9 @@ async function handleTwilioStreamConnection(ws, req) {
                     console.log(`STATS Total audio packets received: ${mediaPacketCount}`);
                     
                     // Clean up WebSocket connection
-                    if (ws.deepgramLive) {
-                        console.log('🛑 DEEPGRAM WEBSOCKET: Finishing transcription session...');
-                        ws.deepgramLive.finish();
+                    if (ws.assemblyaiLive) {
+                        console.log('🛑 ASSEMBLYAI WEBSOCKET: Finishing transcription session...');
+                        ws.assemblyaiLive.close();
                     }
                     
                     // Clean up HTTP chunked processing
@@ -1228,19 +1236,56 @@ async function handleTwilioStreamConnection(ws, req) {
                                     const wavHeader = createWavHeader(ws.chunkBuffer.length);
                                     const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
                                     
-                                    const response = await fetch('https://api.deepgram.com/v1/listen', {
+                                    // Upload audio to AssemblyAI
+                                    const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
                                         method: 'POST',
                                         headers: {
-                                            'Authorization': `Token ${deepgramApiKey}`,
-                                            'Content-Type': 'audio/wav',
-                                            'Accept': 'application/json'
+                                            'Authorization': `Bearer ${assemblyAIApiKey}`,
+                                            'Content-Type': 'application/octet-stream'
                                         },
                                         body: wavFile
                                     });
                                     
-                                    if (response.ok) {
-                                        const result = await response.json();
-                                        const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+                                    if (!uploadResponse.ok) {
+                                        throw new Error(`Final chunk upload failed: ${uploadResponse.status}`);
+                                    }
+                                    
+                                    const uploadResult = await uploadResponse.json();
+                                    
+                                    // Request transcription
+                                    const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Authorization': `Bearer ${assemblyAIApiKey}`,
+                                            'Content-Type': 'application/json'
+                                        },
+                                        body: JSON.stringify({
+                                            audio_url: uploadResult.upload_url,
+                                            language_code: 'en_us',
+                                            punctuate: true,
+                                            format_text: true
+                                        })
+                                    });
+                                    
+                                    if (transcriptResponse.ok) {
+                                        const transcriptResult = await transcriptResponse.json();
+                                        
+                                        // Simple polling for final chunk (max 5 seconds)
+                                        let finalResult = null;
+                                        for (let i = 0; i < 5; i++) {
+                                            await new Promise(resolve => setTimeout(resolve, 1000));
+                                            
+                                            const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptResult.id}`, {
+                                                headers: { 'Authorization': `Bearer ${assemblyAIApiKey}` }
+                                            });
+                                            
+                                            if (statusResponse.ok) {
+                                                finalResult = await statusResponse.json();
+                                                if (finalResult.status === 'completed') break;
+                                            }
+                                        }
+                                        
+                                        const transcript = finalResult?.text;
                                         
                                         if (transcript && transcript.trim().length > 0) {
                                             console.log(`📝 FINAL CHUNK TRANSCRIPT: "${transcript}"`);
@@ -1251,9 +1296,9 @@ async function handleTwilioStreamConnection(ws, req) {
                                                 data: {
                                                     callSid: callSid,
                                                     text: transcript,
-                                                    confidence: result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0,
+                                                    confidence: result.confidence || 0,
                                                     is_final: true,
-                                                    provider: 'deepgram_http_final',
+                                                    provider: 'assemblyai_http_final',
                                                     timestamp: new Date().toISOString()
                                                 }
                                             });
@@ -1338,22 +1383,22 @@ async function handleTwilioStreamConnection(ws, req) {
 
 // Test current transcription service priority
 app.get('/test/transcription-priority', (req, res) => {
-    const hasDeepgram = !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey);
+    const hasAssemblyAI = !!assemblyAIApiKey;
     
-    let primaryService = hasDeepgram ? 'Deepgram' : 'none';
+    let primaryService = hasAssemblyAI ? 'AssemblyAI' : 'none';
     
     res.json({
         primary_service: primaryService,
         services_available: {
-            deepgram: hasDeepgram
+            assemblyai: hasAssemblyAI
         },
         api_keys: {
-            deepgram_configured: hasDeepgram,
-            deepgram_is_hardcoded: !!deepgramApiKey
+            assemblyai_configured: hasAssemblyAI,
+            assemblyai_is_hardcoded: !!assemblyAIApiKey
         },
-        recommendation: hasDeepgram ? 
-            'Deepgram will be used for real-time transcription' : 
-            'Configure DEEPGRAM_API_KEY for real-time transcription',
+        recommendation: hasAssemblyAI ? 
+            'AssemblyAI will be used for real-time transcription' : 
+            'Configure ASSEMBLYAI_API_KEY for real-time transcription',
         timestamp: new Date().toISOString()
     });
 });
@@ -1705,7 +1750,7 @@ app.get('/twilio-config', (req, res) => {
                 node_env: NODE_ENV,
                 twilio_configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
                 openai_configured: !!process.env.OPENAI_API_KEY,
-                deepgram_configured: !!(process.env.DEEPGRAM_API_KEY || deepgramApiKey),
+                assemblyai_configured: !!assemblyAIApiKey,
                 n8n_configured: !!process.env.N8N_WEBHOOK_URL
             },
             websocket_url: `${protocol === 'https' ? 'wss' : 'ws'}://${host}?callSid=CALL_SID_HERE`,
@@ -2086,10 +2131,10 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         }
         
         // For now, return basic analysis without transcription
-        // TODO: Implement Deepgram transcription for bridge recordings
-        console.log('⚠️ Bridge call recording transcription not implemented with Deepgram yet');
+        // TODO: Implement AssemblyAI transcription for bridge recordings
+        console.log('⚠️ Bridge call recording transcription not implemented with AssemblyAI yet');
         const transcriptResult = {
-            text: 'Bridge call recording analysis not yet implemented with Deepgram',
+            text: 'Bridge call recording analysis not yet implemented with AssemblyAI',
             status: 'completed'
         };
         
@@ -2211,7 +2256,7 @@ function createWavHeader(pcmDataLength, sampleRate = 16000, channels = 1, bitsPe
     return header;
 }
 
-// Mulaw to Linear16 PCM conversion with upsampling for Deepgram compatibility
+// Mulaw to Linear16 PCM conversion with upsampling for AssemblyAI compatibility
 function convertMulawToLinear16(mulawBuffer) {
     // Mulaw decompression table (8-bit mulaw to 16-bit linear PCM)
     const mulawToLinear = [
@@ -2348,21 +2393,76 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 
                 console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
                 
-                // Send to Deepgram HTTP API with MAXIMUM ACCURACY settings
-                const response = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&punctuate=true&profanity_filter=false&redact=false&utterances=true&keywords=meeting:3,schedule:3,arrange:3,discuss:3,appointment:3,email:3,send:2,tomorrow:2,contact:2', {
+                // Send to AssemblyAI HTTP API with MAXIMUM ACCURACY settings
+                // Step 1: Upload audio file
+                const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Token ${deepgramApiKey}`,
-                        'Content-Type': 'audio/wav',
-                        'Accept': 'application/json'
+                        'Authorization': `Bearer ${assemblyAIApiKey}`,
+                        'Content-Type': 'application/octet-stream'
                     },
                     body: wavFile
                 });
                 
-                if (response.ok) {
-                    const result = await response.json();
-                    const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript;
-                    const confidence = result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0;
+                if (!uploadResponse.ok) {
+                    throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+                }
+                
+                const uploadResult = await uploadResponse.json();
+                const audioUrl = uploadResult.upload_url;
+                
+                // Step 2: Request transcription
+                const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${assemblyAIApiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        audio_url: audioUrl,
+                        language_code: 'en_us',
+                        punctuate: true,
+                        format_text: true,
+                        word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email'],
+                        boost_param: 'high'
+                    })
+                });
+                
+                if (!transcriptResponse.ok) {
+                    throw new Error(`Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText}`);
+                }
+                
+                const transcriptResult = await transcriptResponse.json();
+                const transcriptId = transcriptResult.id;
+                
+                // Step 3: Poll for completion (simplified for real-time)
+                let attempts = 0;
+                let result = null;
+                
+                while (attempts < 10) { // Max 10 attempts (10 seconds)
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                    
+                    const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+                        headers: {
+                            'Authorization': `Bearer ${assemblyAIApiKey}`
+                        }
+                    });
+                    
+                    if (statusResponse.ok) {
+                        result = await statusResponse.json();
+                        if (result.status === 'completed') {
+                            break;
+                        } else if (result.status === 'error') {
+                            throw new Error(`Transcription failed: ${result.error}`);
+                        }
+                    }
+                    
+                    attempts++;
+                }
+                
+                if (result && result.status === 'completed') {
+                    const transcript = result.text;
+                    const confidence = result.confidence || 0.8; // AssemblyAI doesn't provide word-level confidence in this API
                     
                     if (transcript && transcript.trim().length > 0) {
                         const text = transcript.trim();
@@ -2387,7 +2487,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                     text: text,
                                     confidence: confidence,
                                     is_final: true,
-                                    provider: 'deepgram_http',
+                                    provider: 'assemblyai_http',
                                     chunk_number: ws.chunkCount,
                                     has_keywords: hasKeywords,
                                     quality_score: confidence * (hasKeywords ? 1.2 : 1.0),
@@ -2437,16 +2537,16 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     });
 }
 
-// Deepgram real-time transcription initialization
-async function initializeDeepgramRealtime(callSid, ws) {
-    console.log('🎙️ Initializing Deepgram real-time transcription for call:', callSid);
-    console.log('🔑 Using Deepgram API Key:', deepgramApiKey ? `${deepgramApiKey.substring(0, 10)}...` : 'MISSING');
+// AssemblyAI real-time transcription initialization
+async function initializeAssemblyAILive(callSid, ws) {
+    console.log('🎙️ Initializing AssemblyAI real-time transcription for call:', callSid);
+    console.log('🔑 Using AssemblyAI API Key:', assemblyAIApiKey ? `${assemblyAIApiKey.substring(0, 10)}...` : 'MISSING');
     
-    if (!deepgramApiKey) {
-        console.error('❌ No Deepgram API key available');
+    if (!assemblyAIApiKey) {
+        console.error('❌ No AssemblyAI API key available');
         broadcastToClients({
             type: 'transcription_fallback',
-            message: 'Deepgram API key missing - will analyze recording after call',
+            message: 'AssemblyAI API key missing - will analyze recording after call',
             data: {
                 callSid: callSid,
                 error: 'Missing API key',
@@ -2462,9 +2562,9 @@ async function initializeDeepgramRealtime(callSid, ws) {
         console.log('🔑 TESTING API KEY VALIDITY before WebSocket connection...');
         
         try {
-            const testResponse = await fetch('https://api.deepgram.com/v1/projects', {
+            const testResponse = await fetch('https://api.assemblyai.com/v2/projects', {
                 headers: {
-                    'Authorization': `Token ${deepgramApiKey}`,
+                    'Authorization': `Bearer ${assemblyAIApiKey}`,
                     'Content-Type': 'application/json'
                 }
             });
@@ -2474,7 +2574,7 @@ async function initializeDeepgramRealtime(callSid, ws) {
             if (!testResponse.ok) {
                 const errorText = await testResponse.text();
                 console.error(`❌ API KEY INVALID: ${testResponse.status} - ${errorText}`);
-                throw new Error(`Invalid Deepgram API key: ${testResponse.status} ${testResponse.statusText}`);
+                throw new Error(`Invalid AssemblyAI API key: ${testResponse.status} ${testResponse.statusText}`);
             }
             
             const projectData = await testResponse.json();
@@ -2486,71 +2586,35 @@ async function initializeDeepgramRealtime(callSid, ws) {
             // Don't throw - try the WebSocket connection anyway
         }
         
-        // Create Deepgram live connection with MAXIMUM ACCURACY SETTINGS
-        console.log('🔗 Creating Deepgram WebSocket connection...');
-        console.log('🎯 MAXIMUM ACCURACY: Using nova-2 model with enhanced phone call optimization...');
+        // Create AssemblyAI live connection with MAXIMUM ACCURACY SETTINGS
+        console.log('🔗 Creating AssemblyAI WebSocket connection...');
+        console.log('🎯 MAXIMUM ACCURACY: Using superior transcription accuracy...');
         console.log('🔧 ENHANCED AUDIO: Implementing superior audio processing and confidence filtering...');
         
-        const deepgramLive = deepgram.listen.live({
-            model: 'nova-2',  // Switch to nova-2 for maximum reliability
-            language: 'en-US',
+        const assemblyaiLive = assemblyai.realtime.transcriber({
             sample_rate: 8000,
-            encoding: 'mulaw',
-            channels: 1,
-            interim_results: true,
-            smart_format: true,
+            word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'contact', 'information', 'help', 'support'],
+            boost_param: 'high',
             punctuate: true,
-            profanity_filter: false,
-            redact: false,
-            diarize: false,  // Disable for single speaker clarity
-            vad_events: true,
-            endpointing: 500,  // Longer endpointing for complete sentences
-            // Enhanced keyword boosting for better accuracy
-            keywords: [
-                'meeting:3',
-                'schedule:3', 
-                'arrange:3',
-                'discuss:3',
-                'appointment:3',
-                'email:3',
-                'send:2',
-                'tomorrow:2',
-                'next week:2',
-                'call back:2',
-                'contact:2',
-                'information:2',
-                'help:2',
-                'support:2'
-            ],
-            // Enhanced search terms for phone call context
-            search: [
-                'meeting',
-                'schedule',
-                'arrange',
-                'email',
-                'appointment',
-                'discuss',
-                'call',
-                'contact',
-                'information'
-            ]
+            format_text: true,
+            encoding: 'pcm_mulaw'
         });
 
         let isConnected = false;
         let audioBuffer = [];
         let fullTranscript = '';
         let mediaPacketCount = 0;
-        let twimlFinished = true; // Start immediately for Deepgram
+        let twimlFinished = true; // Start immediately for AssemblyAI
         let resultsReceived = 0;
         let lastResultTime = Date.now();
 
         // Add connection timeout
         const connectionTimeout = setTimeout(() => {
             if (!isConnected) {
-                console.error('⏰ DEEPGRAM CONNECTION TIMEOUT after 10 seconds');
+                console.error('⏰ ASSEMBLYAI CONNECTION TIMEOUT after 10 seconds');
                 broadcastToClients({
-                    type: 'deepgram_timeout',
-                    message: 'Deepgram connection timeout - will analyze recording after call',
+                    type: 'assemblyai_timeout',
+                    message: 'AssemblyAI connection timeout - will analyze recording after call',
                     data: {
                         callSid: callSid,
                         error: 'Connection timeout',
@@ -2564,7 +2628,7 @@ async function initializeDeepgramRealtime(callSid, ws) {
         const resultsChecker = setInterval(() => {
             if (isConnected && mediaPacketCount > 50 && resultsReceived === 0) {
                 const timeSinceStart = Date.now() - lastResultTime;
-                console.error(`⚠️ DEEPGRAM WEBSOCKET FAILURE: ${mediaPacketCount} packets sent, 0 results after ${Math.round(timeSinceStart/1000)}s`);
+                console.error(`⚠️ ASSEMBLYAI WEBSOCKET FAILURE: ${mediaPacketCount} packets sent, 0 results after ${Math.round(timeSinceStart/1000)}s`);
                 console.error('🔍 CONFIRMED: WebSocket connection is unidirectional (hosting platform blocking response stream)');
                 console.error('🔄 IMMEDIATE FALLBACK: Switching to HTTP chunked processing...');
                 
@@ -2574,36 +2638,37 @@ async function initializeDeepgramRealtime(callSid, ws) {
             }
         }, 3000); // Check every 3 seconds for faster fallback
 
-        deepgramLive.on('open', () => {
-            console.log('✅ DEEPGRAM CONNECTED for call:', callSid);
-            console.log('🔧 DEEPGRAM CONFIG: nova-2 model, en language, mulaw encoding, 8kHz sample rate');
+        // Start the connection
+        assemblyaiLive.connect().then(() => {
+            console.log('✅ ASSEMBLYAI CONNECTED for call:', callSid);
+            console.log('🔧 ASSEMBLYAI CONFIG: superior transcription model, en language, mulaw encoding, 8kHz sample rate');
             console.log('🎯 RAW MULAW: Sending original Twilio audio format directly');
             console.log('📊 INTERIM RESULTS: Enabled for basic transcription testing');
-            console.log('🌍 DEEPGRAM MINIMAL: Simplest configuration to verify functionality');
+            console.log('🌍 ASSEMBLYAI MINIMAL: Simplest configuration to verify functionality');
             isConnected = true;
             clearTimeout(connectionTimeout);
             
             // Test connection with a small audio packet
-            console.log('🧪 DEEPGRAM: Testing connection with initial audio...');
+            console.log('🧪 ASSEMBLYAI: Testing connection with initial audio...');
             
             // Send a test audio packet to verify the connection works
             const testAudio = Buffer.alloc(160, 127); // Silent mulaw audio
             try {
-                deepgramLive.send(testAudio);
-                console.log('✅ DEEPGRAM: Test audio packet sent successfully');
+                assemblyaiLive.sendAudio(testAudio);
+                console.log('✅ ASSEMBLYAI: Test audio packet sent successfully');
                 
                 // Send a second test with some variation to trigger processing
                 const testAudio2 = Buffer.alloc(160);
                 for (let i = 0; i < 160; i++) {
                     testAudio2[i] = 127 + Math.sin(i * 0.1) * 50; // Generate some audio variation
                 }
-                deepgramLive.send(testAudio2);
-                console.log('✅ DEEPGRAM: Test audio with variation sent');
+                assemblyaiLive.sendAudio(testAudio2);
+                console.log('✅ ASSEMBLYAI: Test audio with variation sent');
                 
-                // Set a timeout to check if Deepgram responds to test audio
+                // Set a timeout to check if AssemblyAI responds to test audio
                 setTimeout(() => {
                     if (resultsReceived === 0) {
-                        console.log('⚠️ DEEPGRAM: No response to test audio after 5 seconds');
+                        console.log('⚠️ ASSEMBLYAI: No response to test audio after 5 seconds');
                         console.log('🔍 CONFIRMED ISSUE: WebSocket is one-way only (send works, receive blocked)');
                         console.log('🔄 SWITCHING TO HTTP CHUNKED PROCESSING...');
                         
@@ -2612,17 +2677,17 @@ async function initializeDeepgramRealtime(callSid, ws) {
                     }
                 }, 5000);
             } catch (testError) {
-                console.error('❌ DEEPGRAM: Failed to send test audio:', testError);
+                console.error('❌ ASSEMBLYAI: Failed to send test audio:', testError);
             }
             
             // Broadcast connection success
             broadcastToClients({
-                type: 'deepgram_connected',
-                message: 'Deepgram MAXIMUM ACCURACY transcription ready (nova-2 with keyword boosting)',
+                type: 'assemblyai_connected',
+                message: 'AssemblyAI MAXIMUM ACCURACY transcription ready (superior model with keyword boosting)',
                 data: {
                     callSid: callSid,
-                    provider: 'deepgram',
-                    model: 'nova-2',
+                    provider: 'assemblyai',
+                    model: 'assemblyai_model',
                     encoding: 'mulaw',
                     audio_format: 'raw_mulaw_8khz',
                     sample_rate: 8000,
@@ -2636,135 +2701,107 @@ async function initializeDeepgramRealtime(callSid, ws) {
 
             // Process any buffered audio
             if (audioBuffer.length > 0) {
-                console.log(`📤 Sending ${audioBuffer.length} buffered audio packets to Deepgram`);
-                audioBuffer.forEach(audio => deepgramLive.send(audio));
+                console.log(`📤 Sending ${audioBuffer.length} buffered audio packets to AssemblyAI`);
+                audioBuffer.forEach(audio => assemblyaiLive.sendAudio(audio));
                 audioBuffer = [];
             }
+        }).catch(error => {
+            console.error('❌ ASSEMBLYAI CONNECTION FAILED:', error);
+            // Fallback to HTTP chunked processing
+            initializeHttpChunkedProcessing(callSid, ws);
         });
 
-        // Add debugging for ALL Deepgram events
-        console.log('🔧 DEEPGRAM: Setting up event listeners...');
+        // Add debugging for ALL AssemblyAI events
+        console.log('🔧 ASSEMBLYAI: Setting up event listeners...');
         
-        deepgramLive.on('results', (data) => {
+        assemblyaiLive.on('transcript', (data) => {
             resultsReceived++;
             lastResultTime = Date.now();
-            console.log(`📥 DEEPGRAM RAW RESULT #${resultsReceived} received for call:`, callSid);
-            console.log('🔍 DEEPGRAM RESULT TYPE:', data.type || 'unknown');
-            console.log('📄 DEEPGRAM FULL RESULT:', JSON.stringify(data, null, 2));
+            console.log(`📥 ASSEMBLYAI RAW RESULT #${resultsReceived} received for call:`, callSid);
+            console.log('🔍 ASSEMBLYAI RESULT TYPE:', data.message_type || 'unknown');
+            console.log('📄 ASSEMBLYAI FULL RESULT:', JSON.stringify(data, null, 2));
             
-            if (data.channel && data.channel.alternatives && data.channel.alternatives[0]) {
-                const transcript = data.channel.alternatives[0];
+            if (data.text) {
+                const confidence = data.confidence || 0.8; // AssemblyAI real-time API provides confidence differently
+                const isFinal = data.message_type === 'FinalTranscript';
                 
-                if (transcript && transcript.transcript) {
-                    const confidence = transcript.confidence || 0;
-                    const isFinal = data.is_final;
+                console.log(`🎯 ASSEMBLYAI TRANSCRIPT: "${data.text}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
+                
+                // Enhanced confidence filtering with dynamic thresholds
+                const text = data.text.trim();
+                const hasKeywords = ['meeting', 'schedule', 'arrange', 'email', 'discuss', 'appointment', 'call', 'contact'].some(keyword => 
+                    text.toLowerCase().includes(keyword)
+                );
+                
+                // Dynamic confidence thresholds - lower for important keywords
+                const minConfidence = hasKeywords ? 0.05 : 0.15;
+                const minLength = hasKeywords ? 1 : 2;
+                
+                console.log(`🔍 QUALITY CHECK: "${text}" (confidence: ${confidence.toFixed(3)}, hasKeywords: ${hasKeywords}, minConf: ${minConfidence})`);
+                
+                if (confidence > minConfidence && text.length >= minLength) {
+                    console.log(`✅ ASSEMBLYAI ACCEPTED: "${text}" (conf: ${confidence.toFixed(3)})`);
                     
-                    console.log(`🎯 DEEPGRAM TRANSCRIPT: "${transcript.transcript}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
+                    // Add to full transcript if final
+                    if (isFinal) {
+                        fullTranscript += text + ' ';
+                    }
                     
-                    // Enhanced confidence filtering with dynamic thresholds
-                    const text = transcript.transcript.trim();
-                    const hasKeywords = ['meeting', 'schedule', 'arrange', 'email', 'discuss', 'appointment', 'call', 'contact'].some(keyword => 
-                        text.toLowerCase().includes(keyword)
-                    );
-                    
-                    // Dynamic confidence thresholds - lower for important keywords
-                    const minConfidence = hasKeywords ? 0.05 : 0.15;
-                    const minLength = hasKeywords ? 1 : 2;
-                    
-                    console.log(`🔍 QUALITY CHECK: "${text}" (confidence: ${confidence.toFixed(3)}, hasKeywords: ${hasKeywords}, minConf: ${minConfidence})`);
-                    
-                    if (confidence > minConfidence && text.length >= minLength) {
-                        console.log(`✅ DEEPGRAM ACCEPTED: "${text}" (conf: ${confidence.toFixed(3)})`);
-                        
-                        // Add to full transcript if final
-                        if (isFinal) {
-                            fullTranscript += text + ' ';
+                    // Broadcast to dashboard with enhanced data
+                    broadcastToClients({
+                        type: 'live_transcript',
+                        message: text,
+                        data: {
+                            callSid: callSid,
+                            text: text,
+                            confidence: confidence,
+                            is_final: isFinal,
+                            provider: 'assemblyai',
+                            has_keywords: hasKeywords,
+                            quality_score: confidence * (hasKeywords ? 1.2 : 1.0),
+                            timestamp: new Date().toISOString()
                         }
+                    });
+                    
+                    // Process final transcripts for intent detection (lower threshold for processing)
+                    if (isFinal && text.length >= 1) {
+                        console.log('🧠 Processing AssemblyAI transcript for intents...');
                         
-                        // Broadcast to dashboard with enhanced data
-                        broadcastToClients({
-                            type: 'live_transcript',
-                            message: text,
-                            data: {
-                                callSid: callSid,
-                                text: text,
-                                confidence: confidence,
-                                is_final: isFinal,
-                                provider: 'deepgram',
-                                has_keywords: hasKeywords,
-                                quality_score: confidence * (hasKeywords ? 1.2 : 1.0),
-                                timestamp: new Date().toISOString()
-                            }
+                        // Run intent detection and AI analysis in parallel
+                        Promise.allSettled([
+                            detectAndProcessIntent(text, callSid),
+                            analyzeTranscriptWithAI(text, callSid)
+                        ]).then(results => {
+                            console.log('✅ AssemblyAI transcript processing completed');
+                        }).catch(error => {
+                            console.error('❌ AssemblyAI transcript processing error:', error);
                         });
-                        
-                        // Process final transcripts for intent detection (lower threshold for processing)
-                        if (isFinal && text.length >= 1) {
-                            console.log('🧠 Processing Deepgram transcript for intents...');
-                            
-                            // Run intent detection and AI analysis in parallel
-                            Promise.allSettled([
-                                detectAndProcessIntent(text, callSid),
-                                analyzeTranscriptWithAI(text, callSid)
-                            ]).then(results => {
-                                console.log('✅ Deepgram transcript processing completed');
-                            }).catch(error => {
-                                console.error('❌ Deepgram transcript processing error:', error);
-                            });
-                        }
-                    } else {
-                        console.log(`🚫 DEEPGRAM FILTERED: "${text}" (confidence: ${confidence.toFixed(3)}, length: ${text.length}, required: ${minConfidence})`);
                     }
                 } else {
-                    console.log('📥 DEEPGRAM: No transcript in alternatives[0]');
+                    console.log(`🚫 ASSEMBLYAI FILTERED: "${text}" (confidence: ${confidence.toFixed(3)}, length: ${text.length}, required: ${minConfidence})`);
                 }
             } else {
-                console.log('📥 DEEPGRAM: No channel/alternatives in result');
+                console.log('📥 ASSEMBLYAI: No text in transcript result');
             }
         });
 
-        // Add listeners for ALL possible Deepgram events
-        deepgramLive.on('utteranceEnd', (data) => {
-            console.log('🗣️ DEEPGRAM UTTERANCE END:', JSON.stringify(data, null, 2));
+        // Add listeners for ALL possible AssemblyAI events
+        assemblyaiLive.on('session_begins', (data) => {
+            console.log('🎤 ASSEMBLYAI SESSION BEGINS:', JSON.stringify(data, null, 2));
         });
 
-        deepgramLive.on('speechStarted', (data) => {
-            console.log('🎤 DEEPGRAM SPEECH STARTED:', JSON.stringify(data, null, 2));
+        assemblyaiLive.on('session_terminated', (data) => {
+            console.log('🔇 ASSEMBLYAI SESSION TERMINATED:', JSON.stringify(data, null, 2));
         });
 
-        deepgramLive.on('speechEnded', (data) => {
-            console.log('🔇 DEEPGRAM SPEECH ENDED:', JSON.stringify(data, null, 2));
-        });
-
-        // Voice Activity Detection events
-        deepgramLive.on('vad', (data) => {
-            console.log('🗣️ DEEPGRAM VAD EVENT:', JSON.stringify(data, null, 2));
-        });
-
-        deepgramLive.on('metadata', (data) => {
-            console.log('📊 DEEPGRAM METADATA:', JSON.stringify(data, null, 2));
-        });
-
-        deepgramLive.on('warning', (data) => {
-            console.log('⚠️ DEEPGRAM WARNING:', JSON.stringify(data, null, 2));
-        });
-
-        deepgramLive.on('finalize', (data) => {
-            console.log('🏁 DEEPGRAM FINALIZE:', JSON.stringify(data, null, 2));
-        });
-
-        // Catch any other events
-        deepgramLive.on('message', (data) => {
-            console.log('📨 DEEPGRAM MESSAGE:', JSON.stringify(data, null, 2));
-        });
-
-        deepgramLive.on('error', (error) => {
-            console.error('❌ DEEPGRAM WEBSOCKET ERROR:', error);
+        assemblyaiLive.on('error', (error) => {
+            console.error('❌ ASSEMBLYAI WEBSOCKET ERROR:', error);
             console.error('🔍 WebSocket URL that failed:', error.url || 'Unknown URL');
             console.error('🔍 Ready State:', error.readyState || 'Unknown');
             
             // WebSocket failed - switch to HTTP chunked processing fallback
             console.log('🔄 WEBSOCKET FAILED - Switching to HTTP chunked processing fallback...');
-            console.log('💡 This is likely due to Render.com blocking WebSocket connections to Deepgram');
+            console.log('💡 This is likely due to Render.com blocking WebSocket connections to AssemblyAI');
             
             // Initialize HTTP-based chunked processing
             initializeHttpChunkedProcessing(callSid, ws);
@@ -2781,29 +2818,29 @@ async function initializeDeepgramRealtime(callSid, ws) {
             });
         });
 
-        deepgramLive.on('close', () => {
-            console.log('🔒 DEEPGRAM CONNECTION CLOSED for call:', callSid);
-            console.log(`📊 DEEPGRAM STATS: ${resultsReceived} results received, packets should be >0 if audio was sent`);
+        assemblyaiLive.on('close', () => {
+            console.log('🔒 ASSEMBLYAI CONNECTION CLOSED for call:', callSid);
+            console.log(`📊 ASSEMBLYAI STATS: ${resultsReceived} results received, packets should be >0 if audio was sent`);
             isConnected = false;
             clearInterval(resultsChecker);
             
             // Log final transcript
             if (fullTranscript.trim()) {
-                console.log('📝 DEEPGRAM FULL TRANSCRIPT:', fullTranscript.trim());
+                console.log('📝 ASSEMBLYAI FULL TRANSCRIPT:', fullTranscript.trim());
             } else {
-                console.log('⚠️ DEEPGRAM: No transcript generated - possible audio or configuration issue');
+                console.log('⚠️ ASSEMBLYAI: No transcript generated - possible audio or configuration issue');
             }
         });
 
-        // Store the Deepgram connection for use in the existing message handler
-        ws.deepgramLive = deepgramLive;
-        ws.deepgramConnected = () => isConnected;
-        ws.deepgramBuffer = audioBuffer;
+        // Store the AssemblyAI connection for use in the existing message handler
+        ws.assemblyaiLive = assemblyaiLive;
+        ws.assemblyaiConnected = () => isConnected;
+        ws.assemblyaiBuffer = audioBuffer;
 
-        return deepgramLive;
+        return assemblyaiLive;
 
     } catch (error) {
-        console.error('❌ Failed to initialize Deepgram:', error);
+        console.error('❌ Failed to initialize AssemblyAI:', error);
         
         broadcastToClients({
             type: 'transcription_fallback',
