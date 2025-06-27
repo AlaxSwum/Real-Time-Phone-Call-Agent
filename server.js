@@ -954,34 +954,50 @@ let activeConnections = 0;
 wss.on('connection', (ws, req) => {
     const urlPath = req.url;
     const clientIP = req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'] || '';
     console.log(`SOCKET NEW WEBSOCKET CONNECTION to path: ${urlPath}`);
     console.log(`SOCKET Client IP: ${clientIP}`);
+    console.log(`SOCKET User-Agent: ${userAgent}`);
     console.log(`SOCKET Headers:`, req.headers);
     
-    // Enhanced routing logic to properly detect Twilio Media Stream connections
+    // ENHANCED Twilio detection logic - multiple fallback methods
     const isTwilioStream = urlPath.startsWith('/stream/') || 
                           urlPath.includes('callSid=') || 
-                          (req.headers['user-agent'] && req.headers['user-agent'].includes('TwilioMediaStreams'));
+                          userAgent.includes('TwilioMediaStreams') ||
+                          userAgent.includes('Twilio') ||
+                          req.headers['sec-websocket-protocol'] === 'twilio-media-stream' ||
+                          // Default route for Twilio if coming from unknown path but not explicitly dashboard
+                          (urlPath === '/' && !req.headers['sec-websocket-protocol']);
     
-    if (isTwilioStream) {
-        // This is a Twilio Media Stream connection
+    // Explicit dashboard detection
+    const isDashboard = urlPath === '/ws' || 
+                       req.headers['sec-websocket-protocol'] === 'dashboard' ||
+                       userAgent.includes('Mozilla') ||
+                       userAgent.includes('Chrome') ||
+                       userAgent.includes('Safari') ||
+                       userAgent.includes('Firefox');
+    
+    console.log(`🔍 ROUTING DETECTION:`);
+    console.log(`  - URL Path: ${urlPath}`);
+    console.log(`  - User-Agent: ${userAgent}`);
+    console.log(`  - Twilio detected: ${isTwilioStream}`);
+    console.log(`  - Dashboard detected: ${isDashboard}`);
+    
+    if (isTwilioStream && !isDashboard) {
+        // This is likely a Twilio Media Stream connection
         console.log(`SOCKET ✅ Routing to Twilio Media Stream handler`);
-        console.log(`SOCKET Stream path: ${urlPath}`);
+        console.log(`SOCKET Reason: Twilio detection criteria met`);
         handleTwilioStreamConnection(ws, req);
-    } else if (urlPath === '/ws') {
-        // Explicit dashboard connection
-        console.log(`SOCKET ✅ Routing to dashboard handler (explicit /ws)`);
-        handleDashboardConnection(ws, req);
-    } else if (urlPath === '/' && !isTwilioStream) {
-        // Root path dashboard connection (but not Twilio)
-        console.log(`SOCKET ✅ Routing to dashboard handler (root path)`);
+    } else if (isDashboard) {
+        // This is likely a dashboard connection
+        console.log(`SOCKET ✅ Routing to dashboard handler`);
+        console.log(`SOCKET Reason: Dashboard detection criteria met`);
         handleDashboardConnection(ws, req);
     } else {
-        console.log(`ERROR ❌ Unknown WebSocket path: ${urlPath}`);
-        console.log(`ERROR Available paths: /stream/CALLSID, /?callSid=CALLSID, /ws`);
-        console.log(`ERROR Client IP: ${clientIP}`);
-        console.log(`ERROR User-Agent: ${req.headers['user-agent'] || 'N/A'}`);
-        ws.close(1002, 'Unknown path');
+        // Default to dashboard with auto-recovery for misrouted Twilio
+        console.log(`SOCKET ⚠️ Uncertain routing - defaulting to dashboard with auto-recovery`);
+        console.log(`SOCKET Will auto-detect Twilio messages and reroute if needed`);
+        handleDashboardConnection(ws, req);
     }
 });
 
@@ -997,32 +1013,57 @@ function handleDashboardConnection(ws, req) {
         try {
             const data = JSON.parse(message);
             
-            // CRITICAL FIX: Check if this is actually a Twilio message that was misrouted
+            // ENHANCED AUTO-RECOVERY: Check if this is a Twilio message that was misrouted
             if (data.event && ['start', 'media', 'stop'].includes(data.event)) {
-                console.log('🚨 CRITICAL: Twilio message detected on dashboard connection!');
-                console.log('🔧 REROUTING: Converting dashboard connection to Twilio stream handler');
-                console.log('📋 Event type:', data.event);
+                console.log('🚨 CRITICAL ROUTING ERROR: Twilio message detected on dashboard connection!');
+                console.log('🚀 IMMEDIATE REROUTING: Converting to Twilio stream handler');
+                console.log(`📋 Event: ${data.event}, Sequence: ${data.sequenceNumber || 'N/A'}`);
                 
-                // Remove from dashboard clients
+                // Remove from dashboard clients immediately
                 dashboardClients.delete(ws);
                 activeConnections--;
                 
-                // Extract callSid from the start event or media stream
+                // Extract callSid from multiple possible sources
                 let callSid = 'unknown';
                 if (data.event === 'start' && data.start && data.start.callSid) {
                     callSid = data.start.callSid;
+                } else if (data.start && data.start.streamSid) {
+                    // Sometimes callSid is in streamSid
+                    callSid = data.start.streamSid;
                 } else if (data.streamSid) {
                     callSid = data.streamSid;
+                } else if (data.callSid) {
+                    callSid = data.callSid;
+                } else {
+                    // Extract from URL if available
+                    const urlParams = new URLSearchParams(req.url.split('?')[1] || '');
+                    callSid = urlParams.get('callSid') || `recovery_${Date.now()}`;
                 }
                 
-                console.log(`🔄 Rerouting to Twilio handler for call: ${callSid}`);
+                console.log(`🔄 REROUTING call: ${callSid} (event: ${data.event})`);
+                console.log(`🔧 Removing all dashboard handlers and converting to stream handler...`);
                 
-                // Reinitialize as Twilio stream connection
-                const mockReq = { url: `/?callSid=${callSid}` };
+                // Remove all existing event listeners
+                ws.removeAllListeners('message');
+                ws.removeAllListeners('close');
+                ws.removeAllListeners('error');
+                
+                // Create a proper request object for the stream handler
+                const mockReq = { 
+                    url: `/?callSid=${callSid}`,
+                    headers: req.headers || {},
+                    socket: req.socket || {}
+                };
+                
+                // Initialize as Twilio stream connection
                 await handleTwilioStreamConnection(ws, mockReq);
                 
-                // Process this first message
-                ws.emit('message', message);
+                // Immediately process this message through the new handler
+                console.log(`📤 Processing recovered message: ${data.event}`);
+                const messageBuffer = Buffer.from(JSON.stringify(data));
+                ws.emit('message', messageBuffer);
+                
+                console.log(`✅ RECOVERY COMPLETE: Connection successfully rerouted to stream handler`);
                 return;
             }
             
@@ -1051,11 +1092,38 @@ function handleDashboardConnection(ws, req) {
                     if (data.type) {
                         console.log('Unknown dashboard message type:', data.type);
                     } else {
-                        // Likely a Twilio message that got routed to the wrong handler
-                        console.log('WARNING: Received non-dashboard message on dashboard connection');
-                        console.log('DEBUG: Message preview:', message.toString().substring(0, 50) + '...');
-                        console.log('DEBUG: This suggests a WebSocket routing issue');
-                        console.log('DEBUG: Full message structure:', Object.keys(data));
+                        // Check for any structure that suggests this is a Twilio message
+                        const hasTwilioStructure = data.sequenceNumber || 
+                                                 data.media || 
+                                                 (data.start && data.start.streamSid) ||
+                                                 data.streamSid;
+                        
+                        if (hasTwilioStructure) {
+                            // This is definitely a Twilio message - force immediate rerouting
+                            console.log('🚨 FAST-TRACK RECOVERY: Twilio structure detected in unknown message!');
+                            console.log('🚀 FORCING IMMEDIATE REROUTE...');
+                            
+                            // Simulate a start event to trigger recovery
+                            const simulatedData = {
+                                event: 'start',
+                                start: {
+                                    callSid: data.start?.callSid || data.streamSid || `fasttrack_${Date.now()}`,
+                                    streamSid: data.start?.streamSid || data.streamSid
+                                },
+                                sequenceNumber: data.sequenceNumber
+                            };
+                            
+                            // Trigger the recovery mechanism with simulated data
+                            const simulatedMessage = Buffer.from(JSON.stringify(simulatedData));
+                            ws.emit('message', simulatedMessage);
+                            return;
+                        } else {
+                            // Likely a Twilio message that got routed to the wrong handler
+                            console.log('WARNING: Received non-dashboard message on dashboard connection');
+                            console.log('DEBUG: Message preview:', message.toString().substring(0, 50) + '...');
+                            console.log('DEBUG: This suggests a WebSocket routing issue');
+                            console.log('DEBUG: Full message structure:', Object.keys(data));
+                        }
                     }
             }
         } catch (error) {
