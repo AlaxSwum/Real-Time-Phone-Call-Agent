@@ -1832,11 +1832,20 @@ app.get('/debug', (req, res) => {
         ],
         transcription_features: {
             provider: 'AssemblyAI',
-            method: 'HTTP chunked processing',
+            method: 'HTTP chunked processing with intelligent sentence completion',
             sentence_aware: true,
-            speaker_labels: true,
-            interval: '2-3 seconds',
-            accuracy: 'High (93.3%+)'
+            speaker_optimization: 'Single speaker focused',
+            intelligent_completion: true,
+            smart_timeout: '5 seconds',
+            interval: '2-3 seconds (1.2s check)',
+            accuracy: 'Maximum (93.3%+ with business term boosting)',
+            enhancements: [
+                'Complete thought detection',
+                'Smart punctuation addition',
+                'Disfluency removal',
+                'Custom vocabulary boosting',
+                'Enhanced business terms'
+            ]
         },
         deployment_version: 'RAILWAY-OPTIMIZED-V1',
         headers: req.headers,
@@ -2538,14 +2547,15 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     
     // Optimized processing: Every 2 seconds for real-time, but accumulate for complete sentences
     ws.chunkProcessor = setInterval(async () => {
-        // Require minimum 1 second of audio for faster capture, but prefer 2-3 seconds for complete sentences
-        const minAudioLength = 8000; // 1 second at 8kHz
-        const preferredAudioLength = 24000; // 3 seconds at 8kHz
+        // SINGLE SPEAKER OPTIMIZATION: Faster processing for better responsiveness
+        const minAudioLength = 6000; // 0.75 seconds at 8kHz (faster for single speaker)
+        const preferredAudioLength = 20000; // 2.5 seconds at 8kHz (optimal for sentence completion)
         const timeSinceLastProcess = Date.now() - ws.lastProcessTime;
         
         // Process if we have enough audio OR if it's been too long since last processing
+        // More aggressive processing for single speaker scenarios
         const shouldProcess = ws.chunkBuffer.length >= minAudioLength && 
-                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 3000);
+                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 2500);
         
         if (shouldProcess) {
             try {
@@ -2599,22 +2609,40 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
-                        // Enhanced word boosting for business conversations
+                        // MAXIMUM ACCURACY: Enhanced word boosting for single speaker
                         word_boost: [
                             'meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 
                             'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday',
                             'call', 'phone', 'contact', 'business', 'work', 'resignation', 'quit',
-                            'confirm', 'available', 'time', 'date', 'calendar', 'busy', 'free'
+                            'confirm', 'available', 'time', 'date', 'calendar', 'busy', 'free',
+                            'project', 'manager', 'team', 'client', 'customer', 'service', 'support',
+                            'invoice', 'payment', 'contract', 'agreement', 'proposal', 'deadline',
+                            'conference', 'presentation', 'report', 'analysis', 'review', 'feedback'
                         ],
                         boost_param: 'high',
                         speech_model: 'best',
-                        // Additional settings for better sentence completion
+                        // OPTIMIZED for single speaker and maximum accuracy
                         auto_chapters: false,
                         summarization: false,
-                        speaker_labels: true, // Enable speaker detection for bridge calls
-                        speakers_expected: 2, // Expect 2 speakers in bridge calls
+                        speaker_labels: false, // DISABLED - focus on single speaker
+                        speakers_expected: 1, // Single speaker optimization
                         filter_profanity: false,
-                        redact_pii: false
+                        redact_pii: false,
+                        // Enhanced accuracy settings for single stream
+                        language_detection: false, // Skip detection for faster processing
+                        multichannel: false, // Single channel audio
+                        dual_channel: false, // Not needed for single speaker
+                        content_safety: false, // Disable for speed
+                        iab_categories: false, // Disable for speed
+                        // Enhanced sentence punctuation and formatting
+                        disfluencies: false, // Remove "um", "uh" for cleaner output
+                        sentiment_analysis: false, // Disable for speed
+                        entity_detection: false, // Disable for speed
+                        custom_vocabulary: [
+                            // Custom terms for better recognition
+                            'gmail', 'outlook', 'linkedin', 'facebook', 'instagram', 'youtube',
+                            'website', 'email', 'phone number', 'address', 'schedule', 'calendar'
+                        ]
                     })
                 });
                 
@@ -2716,25 +2744,54 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             console.log(`📝 ACCUMULATING: "${processedText}" (waiting for complete sentences)`);
                         }
                         
-                        // Force output of buffer if it's been too long (prevent hanging)
+                        // ENHANCED SENTENCE COMPLETION: More aggressive timeout for better flow
                         const timeSinceLastTranscript = Date.now() - ws.lastTranscriptTime;
-                        if (ws.sentenceBuffer.length > 20 && timeSinceLastTranscript > 8000) {
-                            console.log(`⏰ FORCING OUTPUT: "${ws.sentenceBuffer}" (timeout: ${timeSinceLastTranscript}ms)`);
+                        
+                        // Force output with shorter timeout for better user experience
+                        if (ws.sentenceBuffer.length > 15 && timeSinceLastTranscript > 5000) {
+                            // Try to create a sentence by adding punctuation if missing
+                            let forcedSentence = ws.sentenceBuffer.trim();
+                            if (!forcedSentence.match(/[.!?]$/)) {
+                                // Add period if it looks like a complete thought
+                                if (forcedSentence.length > 10 && 
+                                    (forcedSentence.includes('meeting') || 
+                                     forcedSentence.includes('schedule') || 
+                                     forcedSentence.includes('call') ||
+                                     forcedSentence.includes('email') ||
+                                     forcedSentence.split(' ').length >= 3)) {
+                                    forcedSentence += '.';
+                                }
+                            }
+                            
+                            console.log(`⏰ SMART TIMEOUT: "${forcedSentence}" (${timeSinceLastTranscript}ms wait, ${ws.sentenceBuffer.length} chars)`);
                             
                             broadcastToClients({
                                 type: 'live_transcript',
-                                message: ws.sentenceBuffer,
+                                message: forcedSentence,
                                 data: {
                                     callSid: callSid,
-                                    text: ws.sentenceBuffer,
-                                    confidence: confidence * 0.8, // Lower confidence for forced output
+                                    text: forcedSentence,
+                                    confidence: confidence * 0.85, // Higher confidence for smart timeout
                                     is_final: true,
-                                    provider: 'assemblyai_http_forced',
+                                    provider: 'assemblyai_http_smart_timeout',
                                     forced_output: true,
                                     timeout_ms: timeSinceLastTranscript,
+                                    enhanced_completion: true,
                                     timestamp: new Date().toISOString()
                                 }
                             });
+                            
+                            // Process for intents even on timeout
+                            if (forcedSentence.length > 10) {
+                                Promise.allSettled([
+                                    detectAndProcessIntent(forcedSentence, callSid),
+                                    analyzeTranscriptWithAI(forcedSentence, callSid)
+                                ]).then(results => {
+                                    console.log('✅ Smart timeout processing completed');
+                                }).catch(error => {
+                                    console.error('❌ Smart timeout processing error:', error);
+                                });
+                            }
                             
                             ws.sentenceBuffer = '';
                             ws.lastTranscriptTime = Date.now();
@@ -2761,27 +2818,43 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 ws.lastProcessTime = Date.now();
             }
         }
-    }, 1500); // Check every 1.5 seconds for optimal balance
+    }, 1200); // Check every 1.2 seconds for faster single speaker response
     
-    console.log('✅ OPTIMIZED HTTP chunked processing initialized');
-    console.log('🎯 SENTENCE-AWARE: Will accumulate and output complete sentences every 2-3 seconds');
-    console.log('🔧 RAILWAY-OPTIMIZED: Configured for Railway hosting environment');
+    console.log('✅ MAXIMUM ACCURACY HTTP processing initialized');
+    console.log('🎯 INTELLIGENT SENTENCES: Smart sentence completion with enhanced thought detection');
+    console.log('🔧 SINGLE SPEAKER OPTIMIZED: Focused on maximum accuracy for individual audio stream');
+    console.log('⚡ FAST RESPONSE: Complete sentences every 2-3 seconds, smart timeout at 5 seconds');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'Optimized sentence-aware transcription ready (Railway + AssemblyAI)',
+        message: 'MAXIMUM ACCURACY: Single speaker optimized transcription (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'http_chunked_sentences',
+            method: 'http_chunked_intelligent_sentences',
             interval: '2-3_seconds',
-            features: ['sentence_completion', 'speaker_labels', 'enhanced_accuracy'],
+            smart_timeout: '5_seconds',
+            features: [
+                'intelligent_sentence_completion', 
+                'complete_thought_detection', 
+                'enhanced_accuracy',
+                'single_speaker_optimized',
+                'smart_punctuation',
+                'business_term_boosting'
+            ],
+            accuracy_enhancements: [
+                'expanded_vocabulary_boosting',
+                'disfluency_removal',
+                'custom_business_terms',
+                'smart_timeout_completion'
+            ],
             platform: 'railway',
+            speaker_optimization: 'single_speaker_focus',
             timestamp: new Date().toISOString()
         }
     });
 }
 
-// Helper function to extract complete sentences
+// ENHANCED: Intelligent sentence extraction with complete thought detection
 function extractCompleteSentences(text) {
     if (!text || text.trim().length === 0) {
         return { completeSentences: [], remainingText: '' };
@@ -2799,11 +2872,19 @@ function extractCompleteSentences(text) {
         const punctuation = parts[i + 1];
         
         if (punctuation && punctuation.match(/[.!?]/)) {
-            // Complete sentence
+            // Complete sentence with punctuation
             completeSentences.push((sentencePart + punctuation).trim());
         } else {
-            // Incomplete sentence or remaining text
-            remainingText = sentencePart || '';
+            // Check if this looks like a complete thought even without punctuation
+            const potentialSentence = sentencePart ? sentencePart.trim() : '';
+            
+            if (potentialSentence && isCompleteThought(potentialSentence)) {
+                // Add period and treat as complete sentence
+                completeSentences.push(potentialSentence + '.');
+            } else {
+                // Incomplete sentence or remaining text
+                remainingText = potentialSentence;
+            }
         }
     }
     
@@ -2811,7 +2892,12 @@ function extractCompleteSentences(text) {
     if (remainingText.length === 0 && parts.length > 0) {
         const lastPart = parts[parts.length - 1];
         if (lastPart && !lastPart.match(/[.!?]$/)) {
-            remainingText = lastPart.trim();
+            const trimmedPart = lastPart.trim();
+            if (isCompleteThought(trimmedPart)) {
+                completeSentences.push(trimmedPart + '.');
+            } else {
+                remainingText = trimmedPart;
+            }
         }
     }
     
@@ -2819,6 +2905,61 @@ function extractCompleteSentences(text) {
         completeSentences: completeSentences.filter(s => s.length > 0),
         remainingText: remainingText.trim()
     };
+}
+
+// Helper function to detect if text represents a complete thought
+function isCompleteThought(text) {
+    if (!text || text.length < 8) return false; // Too short to be meaningful
+    
+    const words = text.toLowerCase().split(/\s+/);
+    if (words.length < 3) return false; // Need at least 3 words
+    
+    // Common sentence starters that indicate complete thoughts
+    const completeThoughtPatterns = [
+        // Meeting and scheduling
+        /\b(i want to|i need to|i would like to|let's|we should|can we|could we)\b/i,
+        /\b(schedule|arrange|set up|plan|organize)\b.*\b(meeting|call|appointment)\b/i,
+        /\b(my email is|my email address is|email me at|contact me at)\b/i,
+        /\b(call me|phone me|reach me)\b.*\b(at|on)\b/i,
+        
+        // Complete statements
+        /\b(this is|that is|it is|there is|there are)\b/i,
+        /\b(i am|i'm|we are|we're|you are|you're)\b/i,
+        /\b(i have|i've|we have|we've|you have|you've)\b/i,
+        /\b(i will|i'll|we will|we'll|you will|you'll)\b/i,
+        /\b(i can|i could|we can|we could|you can|you could)\b/i,
+        
+        // Questions (often complete thoughts)
+        /\b(what|when|where|why|how|who|which)\b/i,
+        /\b(do you|did you|will you|would you|can you|could you)\b/i,
+        /\b(is there|are there|was there|were there)\b/i,
+        
+        // Business context
+        /\b(regarding|about|concerning)\b.*\b(project|meeting|proposal|contract)\b/i,
+        /\b(thank you|thanks|please|sorry|excuse me)\b/i
+    ];
+    
+    // Check if any pattern matches
+    const hasCompletePattern = completeThoughtPatterns.some(pattern => pattern.test(text));
+    
+    // Additional checks for sentence completeness
+    const hasSubjectVerb = /\b(i|we|you|he|she|it|they|this|that)\b.*\b(am|is|are|was|were|have|has|had|will|would|can|could|should|do|did|does|say|said|want|need|like|think|know|see|get|go|come|make|take|give)\b/i.test(text);
+    
+    // Business-specific complete thoughts
+    const hasBusinessContext = /\b(meeting|email|phone|call|schedule|appointment|project|work|business|service|support|help|information|details|price|cost|quote)\b/i.test(text);
+    
+    // Check for email patterns (always complete)
+    const hasEmail = /@|at gmail|at outlook|dot com|email is|email address/i.test(text);
+    
+    // Consider it complete if:
+    // 1. Matches a complete thought pattern, OR
+    // 2. Has subject-verb structure AND business context, OR  
+    // 3. Contains email information, OR
+    // 4. Is long enough (8+ words) and has business context
+    return hasCompletePattern || 
+           (hasSubjectVerb && hasBusinessContext) || 
+           hasEmail || 
+           (words.length >= 8 && hasBusinessContext);
 }
 
 // AssemblyAI real-time transcription initialization
