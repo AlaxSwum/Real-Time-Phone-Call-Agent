@@ -1651,17 +1651,17 @@ function extractEmailFromTranscript(transcript) {
     
     // 🚀 MASSIVELY ENHANCED: Email patterns for all speech-to-text errors
     const enhancedEmailPatterns = [
-        // 🎯 FRAGMENTED LETTERS: Handle "My email is f o n O u m p A, e, f" patterns
-        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z]\s*,?\s*){3,15}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal)\s*(dot\s+com|com|token|talking|common|calm)?/gi,
+        // 🎯 STRICT EMAIL CONTEXT: ONLY detect emails with explicit email keywords
+        /(email\s+is\s+|my\s+email\s+is\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+)([a-z]\s*,?\s*){3,15}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal)\s*(dot\s+com|com|token|talking|common|calm)?/gi,
         
-        // 🎯 VERY FRAGMENTED: Handle sequences like "f o n" "O u m p" "A, e, f" across multiple chunks
-        /(email\s+is\s+)?([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){1,}(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal|at\s*gmail|at\s*outlook)?/gi,
+        // 🎯 SPELLED EMAIL ONLY: Must have "email" context before letter sequences
+        /(email\s+is\s+|my\s+email\s+is\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+)([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){1,}(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal|at\s*gmail|at\s*outlook)?/gi,
         
-        // 🎯 NEW: Handle "Y a e a j metocom" type patterns (our specific issue)
-        /(email\s+is\s+|my\s+email\s+)?([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+(metocom|medocomp|gmail|g\s*mail|jemail|adjimetal|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)?/gi,
+        // 🎯 STRICT CONTEXT: Must have clear email context before patterns
+        /(email\s+is\s+|my\s+email\s+is\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+)([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+(metocom|medocomp|gmail|g\s*mail|jemail|adjimetal|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)?/gi,
         
-        // 🎯 ENHANCED: Even more individual letters "s w u m p y a e at gmail"
-        /(email\s+is\s+|my\s+email\s+)?([a-z]\s+){4,8}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud)\s*(dot\s+com|com|token|talking|common|calm)/gi,
+        // 🎯 CONTEXTUAL LETTERS: Only with clear email context
+        /(email\s+is\s+|my\s+email\s+is\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+)([a-z]\s+){4,8}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud)\s*(dot\s+com|com|token|talking|common|calm)/gi,
         
         // 🎯 ULTRA-GARBLED: "E as the U m E adjimetal Com" format
         /(email\s+is\s+|my\s+email\s+)?([a-z])\s+(as\s+the|at\s+the|app\s+the|at|app|up)?\s*([a-z])\s*(m|n|and|em|um)?\s*([a-z])\s*(adjimetal|adji|gmail|g\s*mail|mail)\s*(com|token|talking|common|calm)/gi,
@@ -1672,11 +1672,8 @@ function extractEmailFromTranscript(transcript) {
         // 🎯 VERY GARBLED: Multiple single letters with provider
         /(email\s+is\s+|my\s+email\s+)?([a-z]\s+){2,6}(adjimetal|gmail|g\s*mail|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)/gi,
         
-        // 🎯 ORIGINAL: "A app gmail com" format (single letter + word + provider + extension)
-        /([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
-        
-        // 🎯 WITH CONTEXT: "my email A app gmail com" 
-        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
+        // 🎯 STRICT SINGLE LETTER: Only with email context required
+        /(email\s+is\s+|my\s+email\s+is\s+|email\s+address\s+is\s+|contact\s+me\s+at\s+)([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
         
         // "alex at gmail token" format
         /([a-zA-Z0-9._-]+)\s+at\s+(gmail|g\s*mail|jemail|outlook|out\s*look|yahoo|ya\s*hoo|hotmail|hot\s*mail|icloud|i\s*cloud)\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete|dot\s+com)/gi,
@@ -1780,23 +1777,21 @@ function extractEmailFromTranscript(transcript) {
                 }
                 
                 const validatedEmail = validateAndCleanEmail(cleaned);
-                if (validatedEmail) {
+                if (validatedEmail && validatedEmail.length >= 6) { // Minimum reasonable email length
                     return validatedEmail;
                 }
             }
         }
     }
     
-    // Final attempt: Look for partial email patterns and try to complete them
+    // 🎯 STRICT PARTIAL PATTERNS: Only detect with clear email context and minimum length
     const partialPatterns = [
-        // Find something like "alex gmail" and assume it's "alex@gmail.com"
-        /([a-zA-Z0-9._-]{2,})\s+(gmail|outlook|yahoo|hotmail|icloud)\b/gi,
-        // Find "my email alex" patterns
-        /(email\s+is\s+|my\s+email\s+)([a-zA-Z0-9._-]{2,})/gi,
-        // Handle "o and e f w crown" type patterns (individual letters)
-        /(email\s+is\s+|my\s+email\s+)(([a-z]\s*(and\s+)?){2,}[a-z])\s*(crown|gmail|outlook|yahoo|hotmail|icloud|token|talking|common|calm|come|dot\s+com)/gi,
-        // Handle sequences like "s w u m p y a e" followed by provider
-        /([a-z]\s+){3,}(crown|gmail|outlook|yahoo|hotmail|icloud|token|talking|common|calm)/gi
+        // Find "my email alex" patterns - REQUIRE explicit email context
+        /(my\s+email\s+is\s+|email\s+address\s+is\s+)([a-zA-Z0-9._-]{3,})/gi,
+        // Handle spelled letters ONLY with email context
+        /(my\s+email\s+is\s+|email\s+address\s+is\s+)(([a-z]\s*(and\s+)?){3,}[a-z])\s*(crown|gmail|outlook|yahoo|hotmail|icloud|token|talking|common|calm|come|dot\s+com)/gi,
+        // Require email context AND provider - no standalone letter sequences
+        /(my\s+email\s+is\s+|email\s+address\s+is\s+)([a-z]\s+){4,}(gmail|outlook|yahoo|hotmail|icloud)\s*(dot\s+com|com)/gi
     ];
     
     for (const pattern of partialPatterns) {
@@ -1866,11 +1861,26 @@ function validateAndCleanEmail(email) {
         .toLowerCase()
         .trim();
     
+    // 🎯 STRICT FILTERING: Reject common false positives
+    const falsePositives = [
+        'iwouldlike', 'iwantto', 'tomorrow', 'myimage', 'come', 'that', 'and', 'the', 'for', 'more',
+        'trippy', 'scan', 'arrange', 'meeting', 'free', 'send', 'email', 'blue', 'shoe', 'was'
+    ];
+    
+    const emailUsername = cleanEmail.split('@')[0];
+    if (falsePositives.includes(emailUsername)) {
+        return null; // Reject obvious false positives
+    }
+    
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     
-    if (emailRegex.test(cleanEmail)) {
-        return cleanEmail;
+    if (emailRegex.test(cleanEmail) && cleanEmail.length >= 6) {
+        // Additional check: username should be at least 2 characters
+        const parts = cleanEmail.split('@');
+        if (parts[0].length >= 2) {
+            return cleanEmail;
+        }
     }
     
     return null;
@@ -2928,13 +2938,13 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
                             const lowerText = finalText.toLowerCase();
                             
-                            // Check if starting email mode
-                            if (!ws.emailMode && (lowerText.includes('my email is') || lowerText.includes('email is') || lowerText.includes('email address is'))) {
-                                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
-                                ws.emailMode = true;
-                                ws.emailBuffer = finalText; // Start with this text
-                                ws.emailStartTime = Date.now();
-                            }
+                                        // 🎯 STRICT EMAIL MODE: Only activate with very specific triggers
+            if (!ws.emailMode && (lowerText.includes('my email is') || lowerText.includes('my email address is') || lowerText.includes('email me at') || lowerText.includes('contact me at'))) {
+                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
+                ws.emailMode = true;
+                ws.emailBuffer = finalText; // Start with this text
+                ws.emailStartTime = Date.now();
+            }
                             
                             // If in email mode, accumulate fragments
                             if (ws.emailMode) {
