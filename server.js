@@ -1390,20 +1390,41 @@ async function handleTwilioStreamConnection(ws, req) {
                                             'Content-Type': 'application/json'
                                         },
                                         body: JSON.stringify({
-                                            // 🎯 ENHANCED SIMPLE FINAL CHUNK
+                                            // 🚀 MAXIMUM ACCURACY FINAL CHUNK
                                             audio_url: finalAudioUrl,
                                             language_code: 'en_us',
                                             punctuate: true,
                                             format_text: true,
                                             speech_model: 'best',
                                             word_boost: [
-                                                'email', 'gmail', 'outlook', 'yahoo', 'hotmail',
-                                                'meeting', 'schedule', 'appointment', 'call', 'phone',
+                                                // Core business terms
+                                                'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
+                                                'email', 'gmail', 'outlook', 'yahoo', 'hotmail', 'icloud',
+                                                // Time references  
                                                 'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
-                                                'thursday', 'friday', 'saturday', 'sunday', 'time'
+                                                'thursday', 'friday', 'saturday', 'sunday', 'time', 'pm', 'am',
+                                                // Common speech patterns
+                                                'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
+                                                'discuss', 'talk', 'speak', 'contact', 'reach', 'connect',
+                                                // Email components
+                                                'at', 'dot', 'com', 'org', 'net', 'address'
                                             ],
                                             boost_param: 'high',
-                                            disfluencies: false
+                                            custom_vocabulary: [
+                                                {
+                                                    words: ['arrange', 'schedule', 'meeting', 'appointment'],
+                                                    sounds_like: ['arr', 'sch', 'sked', 'meet', 'appoint'],
+                                                    display_as: ['arrange', 'schedule', 'meeting', 'appointment']
+                                                },
+                                                {
+                                                    words: ['email', 'gmail'],
+                                                    sounds_like: ['emal', 'jemail', 'gmal', 'gmail'],
+                                                    display_as: ['email', 'gmail']
+                                                }
+                                            ],
+                                            disfluencies: false,
+                                            filter_profanity: false,
+                                            auto_highlights: true
                                         })
                                     });
                                     
@@ -1638,12 +1659,21 @@ function extractEmailFromTranscript(transcript) {
         return validateAndCleanEmail(spokenEmail[0]);
     }
     
-    // 🚀 ENHANCED: Email patterns including "A app gmail com" format
+    // 🚀 MASSIVELY ENHANCED: Email patterns for all speech-to-text errors
     const enhancedEmailPatterns = [
-        // 🎯 NEW: "A app gmail com" format (single letter + word + provider + extension)
+        // 🎯 ULTRA-GARBLED: "E as the U m E adjimetal Com" format
+        /(email\s+is\s+|my\s+email\s+)?([a-z])\s+(as\s+the|at\s+the|app\s+the|at|app|up)?\s*([a-z])\s*(m|n|and|em|um)?\s*([a-z])\s*(adjimetal|adji|gmail|g\s*mail|mail)\s*(com|token|talking|common|calm)/gi,
+        
+        // 🎯 SPELLED OUT: "E U M at gmail com" 
+        /(email\s+is\s+|my\s+email\s+)?([a-z])\s+([a-z])\s+([a-z])\s+(at|app)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
+        
+        // 🎯 VERY GARBLED: Multiple single letters with provider
+        /(email\s+is\s+|my\s+email\s+)?([a-z]\s+){2,6}(adjimetal|gmail|g\s*mail|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)/gi,
+        
+        // 🎯 ORIGINAL: "A app gmail com" format (single letter + word + provider + extension)
         /([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
         
-        // 🎯 NEW: "my email A app gmail com" with context
+        // 🎯 WITH CONTEXT: "my email A app gmail com" 
         /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
         
         // "alex at gmail token" format
@@ -1678,6 +1708,12 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)\s*/gi, '.com')
                     .replace(/\s+dot\s+(com|org|net|edu)/gi, '.$1')
                     
+                    // 🎯 ULTRA-GARBLED: Handle "E as the U m E adjimetal Com" format
+                    .replace(/([a-z])\s+(as\s+the|at\s+the|app\s+the|at|app|up)?\s*([a-z])\s*(m|n|and|em|um)?\s*([a-z])\s*(adjimetal|adji|gmail|g\s*mail|mail)\s*(com|token|talking|common|calm)/gi, '$1$3$5@gmail.com')
+                    
+                    // 🎯 SPELLED OUT: Handle "E U M at gmail com"
+                    .replace(/([a-z])\s+([a-z])\s+([a-z])\s+(at|app)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi, '$1$2$3@$5.com')
+                    
                     // 🎯 ENHANCED: Handle "A app gmail com" format
                     .replace(/([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi, '$1@$3.com')
                     
@@ -1688,6 +1724,7 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/hot\s*mail/gi, 'hotmail')
                     .replace(/i\s*cloud/gi, 'icloud')
                     .replace(/proton\s*mail/gi, 'protonmail')
+                    .replace(/adjimetal/gi, 'gmail')  // Fix this specific garbled pattern
                     .replace(/\s+(and\s+)?/g, ''); // Remove spaces and "and" words
                 
                 // Special handling for spelled out characters
@@ -2728,22 +2765,50 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        // 🎯 ENHANCED SIMPLE: Pure audio + smart accuracy boosting
+                        // 🚀 MAXIMUM ACCURACY: Aggressive settings for best results
                         audio_url: audioUrl,
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
                         speech_model: 'best',
-                        // ✅ ADD BACK: Critical word boosting for accuracy
+                        
+                        // 🎯 AGGRESSIVE WORD BOOSTING: Much more comprehensive
                         word_boost: [
-                            'email', 'gmail', 'outlook', 'yahoo', 'hotmail',
-                            'meeting', 'schedule', 'appointment', 'call', 'phone',
+                            // Core business terms
+                            'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
+                            'email', 'gmail', 'outlook', 'yahoo', 'hotmail', 'icloud',
+                            
+                            // Time references  
                             'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
-                            'thursday', 'friday', 'saturday', 'sunday', 'time'
+                            'thursday', 'friday', 'saturday', 'sunday', 'time', 'pm', 'am',
+                            
+                            // Common speech patterns
+                            'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
+                            'discuss', 'talk', 'speak', 'contact', 'reach', 'connect',
+                            
+                            // Email components
+                            'at', 'dot', 'com', 'org', 'net', 'address'
                         ],
                         boost_param: 'high',
-                        // ✅ SMART: Remove filler words for cleaner transcripts
-                        disfluencies: false
+                        
+                        // 🎯 CUSTOM VOCABULARY: More powerful than word_boost
+                        custom_vocabulary: [
+                            {
+                                words: ['arrange', 'schedule', 'meeting', 'appointment'],
+                                sounds_like: ['arr', 'sch', 'sked', 'meet', 'appoint'],
+                                display_as: ['arrange', 'schedule', 'meeting', 'appointment']
+                            },
+                            {
+                                words: ['email', 'gmail'],
+                                sounds_like: ['emal', 'jemail', 'gmal', 'gmail'],
+                                display_as: ['email', 'gmail']
+                            }
+                        ],
+                        
+                        // ✅ ENHANCED ACCURACY SETTINGS
+                        disfluencies: false,
+                        filter_profanity: false,
+                        auto_highlights: true
                     })
                 });
                 
@@ -2921,42 +2986,45 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         }
     }, 1200); // Check every 1.2 seconds for faster single speaker response
     
-    console.log('✅ ENHANCED SIMPLE AUDIO TRANSCRIPTION initialized');
-    console.log('🎯 PURE AUDIO → TEXT: No speaker detection + smart accuracy boosting');
-    console.log('🔧 OPTIMIZED CONFIG: Core features + word boosting for emails/meetings');
-    console.log('⚡ FAST & ACCURATE: Enhanced transcription every 2-3 seconds with email detection');
+    console.log('✅ MAXIMUM ACCURACY AUDIO TRANSCRIPTION initialized');
+    console.log('🎯 AGGRESSIVE BOOSTING: Custom vocabulary + comprehensive word boosting');
+    console.log('🔧 ULTRA-ENHANCED: 40+ boosted terms + advanced email pattern detection');
+    console.log('⚡ MAXIMUM ACCURACY: Best possible transcription with speech-to-text error correction');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'ENHANCED SIMPLE: Audio → text + smart accuracy boosting (Railway + AssemblyAI)',
+        message: 'MAXIMUM ACCURACY: Aggressive boosting + ultra-enhanced email detection (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'enhanced_simple_audio_with_boosting',
+            method: 'maximum_accuracy_aggressive_boosting',
             interval: '2-3_seconds',
-            config: 'optimized_simple',
+            config: 'maximum_accuracy',
             features: [
                 'audio_to_text',
                 'punctuation',
                 'text_formatting',
                 'best_speech_model',
-                'word_boosting_for_accuracy',
-                'enhanced_email_detection',
-                'disfluency_removal'
+                'aggressive_word_boosting',
+                'custom_vocabulary_mapping',
+                'ultra_enhanced_email_detection',
+                'speech_error_correction',
+                'disfluency_removal',
+                'auto_highlights'
             ],
-            word_boost_terms: [
-                'email', 'gmail', 'outlook', 'yahoo', 'hotmail',
-                'meeting', 'schedule', 'appointment', 'call', 'phone',
-                'time_references'
+            word_boost_count: '40+ terms',
+            custom_vocabulary: 'sounds_like_mapping',
+            email_patterns: [
+                'ultra_garbled_detection',
+                'spelled_out_emails',
+                'speech_to_text_error_correction'
             ],
             removed_complexity: [
                 'speaker_detection',
                 'sentiment_analysis',
-                'entity_detection',
-                'content_safety',
-                'profanity_filtering'
+                'entity_detection'
             ],
             platform: 'railway',
-            approach: 'enhanced_simple_with_accuracy_boost',
+            approach: 'maximum_accuracy_aggressive_settings',
             timestamp: new Date().toISOString()
         }
     });
