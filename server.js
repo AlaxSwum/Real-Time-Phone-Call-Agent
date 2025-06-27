@@ -2727,8 +2727,129 @@ function analyzeAudioQuality(audioBuffer) {
 }
 
 // HTTP-based chunked audio processing fallback
+// 🚀 PARALLEL TRANSCRIPT PROCESSING: Handle completed transcripts in background
+async function processCompletedTranscript(transcript, confidence, callSid, ws, transcriptId) {
+    try {
+        let processedText = transcript.trim();
+        
+        // Enhanced sentence completion logic with parallel processing
+        ws.sentenceBuffer = (ws.sentenceBuffer || '') + ' ' + processedText;
+        ws.sentenceBuffer = ws.sentenceBuffer.trim();
+        
+        // Extract complete sentences
+        const sentences = extractCompleteSentences(ws.sentenceBuffer);
+        
+        if (sentences.completeSentences.length > 0) {
+            const finalText = sentences.completeSentences.join(' ');
+            ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
+            
+            console.log(`📝 PARALLEL COMPLETED: "${finalText}" from ${transcriptId}`);
+            console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
+            
+            // Broadcast complete sentences only
+            broadcastToClients({
+                type: 'live_transcript',
+                message: finalText,
+                data: {
+                    callSid: callSid,
+                    text: finalText,
+                    confidence: confidence,
+                    is_final: true,
+                    provider: 'assemblyai_http_parallel',
+                    transcript_id: transcriptId,
+                    processing_mode: '4_second_parallel',
+                    timestamp: new Date().toISOString()
+                }
+            });
+            
+            // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
+            const lowerText = finalText.toLowerCase();
+            
+            // 🎯 STRICT EMAIL MODE: Only activate with very specific triggers
+            if (!ws.emailMode && (lowerText.includes('my email is') || lowerText.includes('my email address is') || lowerText.includes('email me at') || lowerText.includes('contact me at'))) {
+                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
+                ws.emailMode = true;
+                ws.emailBuffer = finalText; // Start with this text
+                ws.emailStartTime = Date.now();
+            }
+            
+            // If in email mode, accumulate fragments
+            if (ws.emailMode) {
+                ws.emailBuffer += ' ' + finalText;
+                console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
+                
+                // Try to extract email from accumulated buffer
+                const possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
+                if (possibleEmail) {
+                    console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
+                    
+                    broadcastToClients({
+                        type: 'email_detected',
+                        message: `Email detected: ${possibleEmail}`,
+                        data: {
+                            callSid: callSid,
+                            email: possibleEmail,
+                            source_transcript: ws.emailBuffer.trim(),
+                            method: 'parallel_accumulated_fragments',
+                            transcript_id: transcriptId,
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    
+                    // Reset email mode after successful detection
+                    ws.emailMode = false;
+                    ws.emailBuffer = '';
+                } else {
+                    // Check for timeout (30 seconds max)
+                    const emailElapsed = Date.now() - ws.emailStartTime;
+                    if (emailElapsed > 30000) {
+                        console.log(`📧 EMAIL MODE TIMEOUT: No email found in "${ws.emailBuffer.trim()}" after 30s`);
+                        ws.emailMode = false;
+                        ws.emailBuffer = '';
+                    }
+                }
+            } else {
+                // Standard email detection for complete sentences
+                const possibleEmail = extractEmailFromTranscript(finalText);
+                if (possibleEmail) {
+                    console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
+                    
+                    broadcastToClients({
+                        type: 'email_detected',
+                        message: `Email detected: ${possibleEmail}`,
+                        data: {
+                            callSid: callSid,
+                            email: possibleEmail,
+                            source_transcript: finalText,
+                            method: 'parallel_standard_detection',
+                            transcript_id: transcriptId,
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                }
+            }
+            
+            // Process for intent detection and AI analysis in parallel
+            Promise.allSettled([
+                detectAndProcessIntent(finalText, callSid),
+                analyzeTranscriptWithAI(finalText, callSid)
+            ]).then(results => {
+                console.log(`✅ Parallel processing completed for ${transcriptId}`);
+            }).catch(error => {
+                console.error(`❌ Parallel processing error for ${transcriptId}:`, error);
+            });
+            
+            ws.lastTranscriptTime = Date.now();
+        } else {
+            console.log(`📝 PARALLEL ACCUMULATING: "${processedText}" from ${transcriptId} (waiting for complete sentences)`);
+        }
+    } catch (error) {
+        console.error(`❌ Error processing completed transcript ${transcriptId}:`, error);
+    }
+}
+
 function initializeHttpChunkedProcessing(callSid, ws) {
-    console.log('🔄 Initializing HTTP chunked processing for call:', callSid);
+    console.log('🔄 Initializing 4-second parallel HTTP chunked processing for call:', callSid);
     
     // Enhanced audio buffer for sentence-aware chunked processing
     ws.audioChunks = [];
@@ -2753,15 +2874,15 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     
     // Optimized processing: Every 2 seconds for real-time, but accumulate for complete sentences
     ws.chunkProcessor = setInterval(async () => {
-        // 🎯 5-SECOND OPTIMIZATION: Better accuracy with complete sentences
-        const minAudioLength = 16000; // 2 seconds at 8kHz (minimum for processing)
-        const preferredAudioLength = 40000; // 5 seconds at 8kHz (optimal for complete sentences)
+        // 🚀 4-SECOND PARALLEL OPTIMIZATION: Enhanced accuracy with immediate parallel processing
+        const minAudioLength = 12800; // 1.6 seconds at 8kHz (minimum for processing)
+        const preferredAudioLength = 32000; // 4 seconds at 8kHz (optimal for complete sentences)
         const timeSinceLastProcess = Date.now() - ws.lastProcessTime;
         
-        // Process every 5 seconds OR when we have substantial audio accumulated
-        // Prioritize complete sentences over speed for better accuracy
+        // Process every 4 seconds OR when we have enough audio - START IMMEDIATELY without waiting
+        // Parallel processing: don't wait for previous transcripts to complete
         const shouldProcess = ws.chunkBuffer.length >= minAudioLength && 
-                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 5000);
+                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 4000);
         
         if (shouldProcess) {
             try {
@@ -2866,239 +2987,64 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 console.log(`🆔 AssemblyAI transcript ID: ${transcriptId}`);
                 console.log(`📊 Initial status: ${transcriptResult.status}`);
                 
-                // Optimized polling for faster results
-                let attempts = 0;
-                let result = null;
+                // 🚀 PARALLEL PROCESSING: Start next chunk immediately, don't wait for completion
+                console.log(`🚀 PARALLEL MODE: Starting transcript ${transcriptId} in background`);
                 
-                while (attempts < 20) { // Increased attempts for longer audio
-                    await new Promise(resolve => setTimeout(resolve, 800)); // Faster polling
-                    attempts++;
+                // Process this transcript in parallel (non-blocking)
+                (async () => {
+                    let attempts = 0;
+                    let result = null;
                     
-                    console.log(`🔄 Polling attempt ${attempts}/20 for transcript ${transcriptId}`);
-                    
-                    const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-                        headers: {
-                            'Authorization': `Bearer ${assemblyAIApiKey}`
-                        }
-                    });
-                    
-                    if (statusResponse.ok) {
-                        result = await statusResponse.json();
-                        console.log(`📊 Transcript status: ${result.status}`);
+                    while (attempts < 15) { // Reduced attempts for faster timeout
+                        await new Promise(resolve => setTimeout(resolve, 600)); // Faster polling 
+                        attempts++;
                         
-                        if (result.status === 'completed') {
-                            console.log(`✅ Transcription completed after ${attempts} attempts (${attempts * 0.8}s)`);
-                            break;
-                        } else if (result.status === 'error') {
-                            console.error(`❌ Transcription error: ${result.error}`);
-                            throw new Error(`Transcription failed: ${result.error}`);
-                        }
-                    }
-                }
-                
-                if (result && result.status === 'completed') {
-                    const transcript = result.text;
-                    const confidence = result.confidence || 0.8;
-                    
-                    if (transcript && transcript.trim().length > 0) {
-                        let processedText = transcript.trim();
+                        console.log(`🔄 Polling attempt ${attempts}/15 for transcript ${transcriptId}`);
                         
-                        // Enhanced sentence completion logic
-                        ws.sentenceBuffer += ' ' + processedText;
-                        ws.sentenceBuffer = ws.sentenceBuffer.trim();
-                        
-                        // Extract complete sentences
-                        const sentences = extractCompleteSentences(ws.sentenceBuffer);
-                        
-                        if (sentences.completeSentences.length > 0) {
-                            const finalText = sentences.completeSentences.join(' ');
-                            ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
-                            
-                            console.log(`📝 COMPLETE SENTENCES: "${finalText}"`);
-                            console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
-                            
-                            // Broadcast complete sentences only
-                            broadcastToClients({
-                                type: 'live_transcript',
-                                message: finalText,
-                                data: {
-                                    callSid: callSid,
-                                    text: finalText,
-                                    confidence: confidence,
-                                    is_final: true,
-                                    provider: 'assemblyai_http_sentences',
-                                    chunk_number: ws.chunkCount,
-                                    speakers: 1, // Single speaker optimization
-                                    has_speaker_labels: !!result.utterances,
-                                    sentence_count: sentences.completeSentences.length,
-                                    timestamp: new Date().toISOString()
+                        try {
+                            const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+                                headers: {
+                                    'Authorization': `Bearer ${assemblyAIApiKey}`
                                 }
                             });
                             
-                            // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
-                            const lowerText = finalText.toLowerCase();
-                            
-                                        // 🎯 STRICT EMAIL MODE: Only activate with very specific triggers
-            if (!ws.emailMode && (lowerText.includes('my email is') || lowerText.includes('my email address is') || lowerText.includes('email me at') || lowerText.includes('contact me at'))) {
-                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
-                ws.emailMode = true;
-                ws.emailBuffer = finalText; // Start with this text
-                ws.emailStartTime = Date.now();
-            }
-                            
-                            // If in email mode, accumulate fragments
-                            if (ws.emailMode) {
-                                ws.emailBuffer += ' ' + finalText;
-                                console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
+                            if (statusResponse.ok) {
+                                result = await statusResponse.json();
+                                console.log(`📊 Transcript status: ${result.status}`);
                                 
-                                // Try to extract email from accumulated buffer
-                                const possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
-                                if (possibleEmail) {
-                                    console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
+                                if (result.status === 'completed') {
+                                    console.log(`✅ PARALLEL COMPLETED: ${transcriptId} after ${attempts} attempts (${attempts * 0.6}s)`);
                                     
-                                    broadcastToClients({
-                                        type: 'email_detected',
-                                        message: `Email detected: ${possibleEmail}`,
-                                        data: {
-                                            callSid: callSid,
-                                            email: possibleEmail,
-                                            source_transcript: ws.emailBuffer.trim(),
-                                            method: 'accumulated_fragments',
-                                            timestamp: new Date().toISOString()
-                                        }
-                                    });
+                                    const transcript = result.text;
+                                    const confidence = result.confidence || 0.8;
                                     
-                                    // Reset email mode after successful detection
-                                    ws.emailMode = false;
-                                    ws.emailBuffer = '';
-                                } else {
-                                    // Check for timeout (30 seconds max)
-                                    const emailElapsed = Date.now() - ws.emailStartTime;
-                                    if (emailElapsed > 30000) {
-                                        console.log(`📧 EMAIL MODE TIMEOUT: No email found in "${ws.emailBuffer.trim()}" after 30s`);
-                                        ws.emailMode = false;
-                                        ws.emailBuffer = '';
+                                    if (transcript && transcript.trim().length > 0) {
+                                        // Process the completed transcript
+                                        await processCompletedTranscript(transcript, confidence, callSid, ws, transcriptId);
                                     }
-                                }
-                            } else {
-                                // Standard email detection for complete sentences
-                                const possibleEmail = extractEmailFromTranscript(finalText);
-                                if (possibleEmail) {
-                                    console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
-                                    
-                                    broadcastToClients({
-                                        type: 'email_detected',
-                                        message: `Email detected: ${possibleEmail}`,
-                                        data: {
-                                            callSid: callSid,
-                                            email: possibleEmail,
-                                            source_transcript: finalText,
-                                            method: 'standard_detection',
-                                            timestamp: new Date().toISOString()
-                                        }
-                                    });
+                                    break;
+                                } else if (result.status === 'error') {
+                                    console.error(`❌ PARALLEL ERROR: ${transcriptId} - ${result.error}`);
+                                    break;
                                 }
                             }
-                            
-                            // Process for intent detection and AI analysis
-                            Promise.allSettled([
-                                detectAndProcessIntent(finalText, callSid),
-                                analyzeTranscriptWithAI(finalText, callSid)
-                            ]).then(results => {
-                                console.log('✅ Sentence processing completed');
-                            }).catch(error => {
-                                console.error('❌ Sentence processing error:', error);
-                            });
-                            
-                            ws.lastTranscriptTime = Date.now();
-                        } else {
-                            console.log(`📝 ACCUMULATING: "${processedText}" (waiting for complete sentences)`);
-                        }
-                        
-                        // ENHANCED SENTENCE COMPLETION: 5-second timeout for complete sentences
-                        const timeSinceLastTranscript = Date.now() - ws.lastTranscriptTime;
-                        
-                        // Force output after 7 seconds to allow for complete sentence accumulation
-                        if (ws.sentenceBuffer.length > 20 && timeSinceLastTranscript > 7000) {
-                            // Try to create a sentence by adding punctuation if missing
-                            let forcedSentence = ws.sentenceBuffer.trim();
-                            if (!forcedSentence.match(/[.!?]$/)) {
-                                // Add period if it looks like a complete thought
-                                if (forcedSentence.length > 10 && 
-                                    (forcedSentence.includes('meeting') || 
-                                     forcedSentence.includes('schedule') || 
-                                     forcedSentence.includes('call') ||
-                                     forcedSentence.includes('email') ||
-                                     forcedSentence.split(' ').length >= 3)) {
-                                    forcedSentence += '.';
-                                }
-                            }
-                            
-                            // 🎯 TIMEOUT EMAIL CHECK: Also check email buffer for timeout
-                            if (ws.emailMode && ws.emailBuffer) {
-                                const combinedText = ws.emailBuffer.trim() + ' ' + forcedSentence;
-                                console.log(`📧 EMAIL TIMEOUT: Including email buffer in forced sentence: "${combinedText}"`);
-                                
-                                // Try to extract email from combined text
-                                const timeoutEmail = extractEmailFromTranscript(combinedText);
-                                if (timeoutEmail) {
-                                    console.log(`📧 EMAIL DETECTED ON TIMEOUT: "${timeoutEmail}" from combined: "${combinedText}"`);
-                                    
-                                    broadcastToClients({
-                                        type: 'email_detected',
-                                        message: `Email detected (timeout): ${timeoutEmail}`,
-                                        data: {
-                                            callSid: callSid,
-                                            email: timeoutEmail,
-                                            source_transcript: combinedText,
-                                            method: 'timeout_combined',
-                                            timestamp: new Date().toISOString()
-                                        }
-                                    });
-                                    
-                                    // Reset email mode
-                                    ws.emailMode = false;
-                                    ws.emailBuffer = '';
-                                }
-                                
-                                forcedSentence = combinedText; // Use combined text for broadcast
-                            }
-                            
-                            console.log(`⏰ 5-SECOND TIMEOUT: "${forcedSentence}" (${timeSinceLastTranscript}ms wait, ${ws.sentenceBuffer.length} chars)`);
-                            
-                            broadcastToClients({
-                                type: 'live_transcript',
-                                message: forcedSentence,
-                                data: {
-                                    callSid: callSid,
-                                    text: forcedSentence,
-                                    confidence: confidence * 0.9, // Higher confidence for 5-second timeout
-                                    is_final: true,
-                                    provider: 'assemblyai_http_5_second_timeout',
-                                    forced_output: true,
-                                    timeout_ms: timeSinceLastTranscript,
-                                    processing_mode: '5_second_complete_sentences',
-                                    timestamp: new Date().toISOString()
-                                }
-                            });
-                            
-                            // Process for intents even on timeout
-                            if (forcedSentence.length > 10) {
-                                Promise.allSettled([
-                                    detectAndProcessIntent(forcedSentence, callSid),
-                                    analyzeTranscriptWithAI(forcedSentence, callSid)
-                                ]).then(results => {
-                                    console.log('✅ Smart timeout processing completed');
-                                }).catch(error => {
-                                    console.error('❌ Smart timeout processing error:', error);
-                                });
-                            }
-                            
-                            ws.sentenceBuffer = '';
-                            ws.lastTranscriptTime = Date.now();
+                        } catch (pollError) {
+                            console.error(`❌ PARALLEL POLL ERROR: ${transcriptId} - ${pollError.message}`);
+                            break;
                         }
                     }
-                }
+                    
+                    if (attempts >= 15) {
+                        console.log(`⏰ PARALLEL TIMEOUT: ${transcriptId} after 15 attempts (9s) - continuing with next chunk`);
+                    }
+                })();
+                                
+                // 🚀 IMMEDIATE PROCESSING: Don't wait for this transcript, start next chunk immediately
+                console.log(`⚡ IMMEDIATE MODE: Chunk ${ws.chunkCount} sent to AssemblyAI, starting next chunk processing`);
+                
+                // Clear buffer and continue processing immediately (parallel mode)
+                ws.chunkBuffer = Buffer.alloc(0);
+                ws.lastProcessTime = Date.now();
                 
                 // Cleanup: Delete temporary audio file
                 try {
@@ -3119,29 +3065,30 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 ws.lastProcessTime = Date.now();
             }
         }
-    }, 2000); // Check every 2 seconds for 5-second processing cycles
+    }, 1500); // Check every 1.5 seconds for 4-second processing cycles
     
-    console.log('✅ ENHANCED ACCURACY: 5-second audio processing initialized');
-    console.log('🎯 COMPLETE SENTENCES: Prioritizing sentence completion over speed');
-    console.log('🔧 OPTIMIZED TIMING: 5-second intervals for better accuracy');
-    console.log('⚡ ENHANCED QUALITY: Reduced fragmentation with longer processing windows');
+    console.log('✅ PARALLEL PROCESSING: 4-second audio processing with immediate parallel execution');
+    console.log('🚀 ENHANCED SPEED: Multiple transcripts processing simultaneously');
+    console.log('🔧 OPTIMIZED TIMING: 4-second intervals with no waiting between chunks');
+    console.log('⚡ MAXIMUM EFFICIENCY: Immediate audio processing + parallel completion handling');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'ENHANCED ACCURACY: 5-second processing + complete sentence detection (Railway + AssemblyAI)',
+        message: 'PARALLEL PROCESSING: 4-second immediate + enhanced accuracy (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'enhanced_accuracy_5_second_processing',
-            interval: '5_seconds',
+            method: 'parallel_4_second_immediate_processing',
+            interval: '4_seconds_parallel',
             config: 'maximum_accuracy',
             features: [
                 'audio_to_text',
-                'punctuation',
+                'punctuation', 
                 'text_formatting',
-                'best_speech_model',
+                'universal_speech_model',
                 'aggressive_word_boosting',
-                'custom_vocabulary_mapping',
-                'ultra_enhanced_email_detection',
+                'parallel_processing',
+                'immediate_chunk_start',
+                'enhanced_email_detection',
                 'speech_error_correction',
                 'disfluency_removal',
                 'auto_highlights'
