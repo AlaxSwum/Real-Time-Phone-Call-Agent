@@ -958,21 +958,29 @@ wss.on('connection', (ws, req) => {
     console.log(`SOCKET Client IP: ${clientIP}`);
     console.log(`SOCKET Headers:`, req.headers);
     
-    // Check if this is a Twilio Media Stream connection
-    // Supports both /stream/CALLSID and /?callSid=CALLSID formats
-    if (urlPath.startsWith('/stream/') || urlPath.includes('callSid=')) {
+    // Enhanced routing logic to properly detect Twilio Media Stream connections
+    const isTwilioStream = urlPath.startsWith('/stream/') || 
+                          urlPath.includes('callSid=') || 
+                          (req.headers['user-agent'] && req.headers['user-agent'].includes('TwilioMediaStreams'));
+    
+    if (isTwilioStream) {
         // This is a Twilio Media Stream connection
         console.log(`SOCKET ✅ Routing to Twilio Media Stream handler`);
         console.log(`SOCKET Stream path: ${urlPath}`);
         handleTwilioStreamConnection(ws, req);
-    } else if (urlPath === '/ws' || urlPath === '/') {
-        // This is a dashboard connection
-        console.log(`SOCKET ✅ Routing to dashboard handler`);
+    } else if (urlPath === '/ws') {
+        // Explicit dashboard connection
+        console.log(`SOCKET ✅ Routing to dashboard handler (explicit /ws)`);
+        handleDashboardConnection(ws, req);
+    } else if (urlPath === '/' && !isTwilioStream) {
+        // Root path dashboard connection (but not Twilio)
+        console.log(`SOCKET ✅ Routing to dashboard handler (root path)`);
         handleDashboardConnection(ws, req);
     } else {
         console.log(`ERROR ❌ Unknown WebSocket path: ${urlPath}`);
         console.log(`ERROR Available paths: /stream/CALLSID, /?callSid=CALLSID, /ws`);
         console.log(`ERROR Client IP: ${clientIP}`);
+        console.log(`ERROR User-Agent: ${req.headers['user-agent'] || 'N/A'}`);
         ws.close(1002, 'Unknown path');
     }
 });
@@ -988,6 +996,35 @@ function handleDashboardConnection(ws, req) {
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
+            
+            // CRITICAL FIX: Check if this is actually a Twilio message that was misrouted
+            if (data.event && ['start', 'media', 'stop'].includes(data.event)) {
+                console.log('🚨 CRITICAL: Twilio message detected on dashboard connection!');
+                console.log('🔧 REROUTING: Converting dashboard connection to Twilio stream handler');
+                console.log('📋 Event type:', data.event);
+                
+                // Remove from dashboard clients
+                dashboardClients.delete(ws);
+                activeConnections--;
+                
+                // Extract callSid from the start event or media stream
+                let callSid = 'unknown';
+                if (data.event === 'start' && data.start && data.start.callSid) {
+                    callSid = data.start.callSid;
+                } else if (data.streamSid) {
+                    callSid = data.streamSid;
+                }
+                
+                console.log(`🔄 Rerouting to Twilio handler for call: ${callSid}`);
+                
+                // Reinitialize as Twilio stream connection
+                const mockReq = { url: `/?callSid=${callSid}` };
+                await handleTwilioStreamConnection(ws, mockReq);
+                
+                // Process this first message
+                ws.emit('message', message);
+                return;
+            }
             
             // Only log non-ping messages to reduce spam
             if (data.type && data.type !== 'ping') {
@@ -1018,6 +1055,7 @@ function handleDashboardConnection(ws, req) {
                         console.log('WARNING: Received non-dashboard message on dashboard connection');
                         console.log('DEBUG: Message preview:', message.toString().substring(0, 50) + '...');
                         console.log('DEBUG: This suggests a WebSocket routing issue');
+                        console.log('DEBUG: Full message structure:', Object.keys(data));
                     }
             }
         } catch (error) {
