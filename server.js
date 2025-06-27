@@ -1278,30 +1278,7 @@ async function handleTwilioStreamConnection(ws, req) {
                                             format_text: true,
                                             word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday', 'call', 'phone', 'contact', 'business', 'work'],
                                             boost_param: 'high',
-                                            speech_model: 'best',
-                                            language_detection: true,
-                                            filter_profanity: false,
-                                            disfluencies: false,
-                                            speaker_labels: false,
-                                            dual_channel: false,
-                                            sentiment_analysis: true,
-                                            entity_detection: true,
-                                            iab_categories: false,
-                                            content_safety: false,
-                                            auto_chapters: false,
-                                            summarization: false,
-                                            custom_spelling: [
-                                                {"from": ["friday"], "to": "Friday"},
-                                                {"from": ["monday"], "to": "Monday"},
-                                                {"from": ["tuesday"], "to": "Tuesday"},
-                                                {"from": ["wednesday"], "to": "Wednesday"},
-                                                {"from": ["thursday"], "to": "Thursday"},
-                                                {"from": ["saturday"], "to": "Saturday"},
-                                                {"from": ["sunday"], "to": "Sunday"},
-                                                {"from": ["email"], "to": "email"},
-                                                {"from": ["gmail"], "to": "Gmail"},
-                                                {"from": ["meeting"], "to": "meeting"}
-                                            ]
+                                            speech_model: 'best'
                                         })
                                     });
                                     
@@ -2483,30 +2460,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         format_text: true,
                         word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday', 'call', 'phone', 'contact', 'business', 'work'],
                         boost_param: 'high',
-                        speech_model: 'best',
-                        language_detection: true,
-                        filter_profanity: false,
-                        disfluencies: false,
-                        speaker_labels: false,
-                        dual_channel: false,
-                        sentiment_analysis: true,
-                        entity_detection: true,
-                        iab_categories: false,
-                        content_safety: false,
-                        auto_chapters: false,
-                        summarization: false,
-                        custom_spelling: [
-                            {"from": ["friday"], "to": "Friday"},
-                            {"from": ["monday"], "to": "Monday"},
-                            {"from": ["tuesday"], "to": "Tuesday"},
-                            {"from": ["wednesday"], "to": "Wednesday"},
-                            {"from": ["thursday"], "to": "Thursday"},
-                            {"from": ["saturday"], "to": "Saturday"},
-                            {"from": ["sunday"], "to": "Sunday"},
-                            {"from": ["email"], "to": "email"},
-                            {"from": ["gmail"], "to": "Gmail"},
-                            {"from": ["meeting"], "to": "meeting"}
-                        ]
+                        speech_model: 'best'
                     })
                 });
                 
