@@ -1433,12 +1433,12 @@ async function handleTwilioStreamConnection(ws, req) {
                                             'Content-Type': 'application/json'
                                         },
                                         body: JSON.stringify({
-                                            // 🚀 MAXIMUM ACCURACY FINAL CHUNK
-                                            audio_url: finalAudioUrl,
-                                            language_code: 'en_us',
-                                            punctuate: true,
-                                            format_text: true,
-                                            speech_model: 'universal',
+                                                                        // 🚀 MAXIMUM ACCURACY FINAL CHUNK
+                            audio_url: finalAudioUrl,
+                            language_code: 'en', // General English for better accent support
+                            punctuate: true,
+                            format_text: true,
+                            speech_model: 'universal-1', // Upgraded for better accent handling
                                             word_boost: [
                                                 // Core business terms
                                                 'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
@@ -2977,12 +2977,12 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                     body: JSON.stringify({
                         // 🚀 MAXIMUM ACCURACY: Aggressive settings for best results
                         audio_url: audioUrl,
-                        language_code: 'en_us',
+                        language_code: 'en', // Changed from 'en_us' to general English for better accent support
                         punctuate: true,
                         format_text: true,
-                        speech_model: 'universal',
+                        speech_model: 'universal-1', // Upgraded to Universal-1 for better accent handling
                         
-                        // 🎯 AGGRESSIVE WORD BOOSTING: Enhanced for email alphabet detection
+                        // 🎯 AGGRESSIVE WORD BOOSTING: Enhanced for email alphabet detection + accent support
                         word_boost: [
                             // Core business terms
                             'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
@@ -2992,12 +2992,14 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
                             'thursday', 'friday', 'saturday', 'sunday', 'time', 'pm', 'am',
                             
-                            // Common speech patterns
+                            // Common speech patterns (accent-aware)
                             'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
                             'discuss', 'talk', 'speak', 'contact', 'reach', 'connect',
+                            'want', 'need', 'help', 'support', 'information', 'details',
                             
                             // Email components and spelled letters
                             'at', 'dot', 'com', 'org', 'net', 'address', 'email', 'is',
+                            'my', 'and', 'the', 'to', 'for', 'with', 'on', 'in',
                             
                             // ENHANCED: Individual letters for email spelling
                             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
@@ -3005,14 +3007,12 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             
                             // Common email endings as spoken
                             'gmail', 'g-mail', 'jemail', 'outlook', 'out-look', 'yahoo', 'ya-hoo',
-                            'hotmail', 'hot-mail', 'icloud', 'i-cloud', 'dot-com', 'dotcom'
+                            'hotmail', 'hot-mail', 'icloud', 'i-cloud', 'dot-com', 'dotcom',
+                            
+                            // Accent-aware common words
+                            'nine', 'nine-nine', 'ninety', 'nineteen', 'number', 'numbers'
                         ],
-                        boost_param: 'high',
-                        
-                        // ✅ ENHANCED ACCURACY SETTINGS  
-                        disfluencies: false,
-                        filter_profanity: false,
-                        auto_highlights: true
+                        boost_param: 'high'
                     })
                 });
                 
