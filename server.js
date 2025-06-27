@@ -1438,7 +1438,7 @@ async function handleTwilioStreamConnection(ws, req) {
                             language_code: 'en', // General English for better accent support
                             punctuate: true,
                             format_text: true,
-                            speech_model: 'universal-1', // Upgraded for better accent handling
+                            speech_model: 'best', // Use best model for maximum accuracy and accent support
                                             word_boost: [
                                                 // Core business terms
                                                 'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
@@ -2980,7 +2980,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         language_code: 'en', // Changed from 'en_us' to general English for better accent support
                         punctuate: true,
                         format_text: true,
-                        speech_model: 'universal-1', // Upgraded to Universal-1 for better accent handling
+                        speech_model: 'best', // Use best model for maximum accuracy and accent support
                         
                         // 🎯 AGGRESSIVE WORD BOOSTING: Enhanced for email alphabet detection + accent support
                         word_boost: [
