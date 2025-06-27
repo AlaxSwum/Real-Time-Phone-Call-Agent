@@ -1390,12 +1390,11 @@ async function handleTwilioStreamConnection(ws, req) {
                                             'Content-Type': 'application/json'
                                         },
                                         body: JSON.stringify({
+                                            // 🎯 ULTRA-SIMPLE FINAL CHUNK
                                             audio_url: finalAudioUrl,
                                             language_code: 'en_us',
                                             punctuate: true,
                                             format_text: true,
-                                            word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday', 'call', 'phone', 'contact', 'business', 'work'],
-                                            boost_param: 'high',
                                             speech_model: 'best'
                                         })
                                     });
@@ -2711,44 +2710,14 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
+                        // 🎯 ULTRA-SIMPLE AUDIO-ONLY TRANSCRIPTION
                         audio_url: audioUrl,
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
-                        // MAXIMUM ACCURACY: Enhanced word boosting for single speaker
-                        word_boost: [
-                            'meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 
-                            'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday',
-                            'call', 'phone', 'contact', 'business', 'work', 'resignation', 'quit',
-                            'confirm', 'available', 'time', 'date', 'calendar', 'busy', 'free',
-                            'project', 'manager', 'team', 'client', 'customer', 'service', 'support',
-                            'invoice', 'payment', 'contract', 'agreement', 'proposal', 'deadline',
-                            'conference', 'presentation', 'report', 'analysis', 'review', 'feedback'
-                        ],
-                        boost_param: 'high',
-                        speech_model: 'best',
-                        // OPTIMIZED for single speaker and maximum accuracy
-                        auto_chapters: false,
-                        summarization: false,
-                        speaker_labels: false, // DISABLED - focus on single speaker
-                        // speakers_expected removed - incompatible with speaker_labels: false
-                        filter_profanity: false,
-                        redact_pii: false,
-                        // Enhanced accuracy settings for single stream
-                        language_detection: false, // Skip detection for faster processing
-                        multichannel: false, // Single channel audio
-                        dual_channel: false, // Not needed for single speaker
-                        content_safety: false, // Disable for speed
-                        iab_categories: false, // Disable for speed
-                        // Enhanced sentence punctuation and formatting
-                        disfluencies: false, // Remove "um", "uh" for cleaner output
-                        sentiment_analysis: false, // Disable for speed
-                        entity_detection: false, // Disable for speed
-                        custom_vocabulary: [
-                            // Custom terms for better recognition
-                            'gmail', 'outlook', 'linkedin', 'facebook', 'instagram', 'youtube',
-                            'website', 'email', 'phone number', 'address', 'schedule', 'calendar'
-                        ]
+                        speech_model: 'best'
+                        // ✅ That's it! No speaker detection, no complex features
+                        // ✅ Just pure audio → text conversion
                     })
                 });
                 
@@ -2926,35 +2895,36 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         }
     }, 1200); // Check every 1.2 seconds for faster single speaker response
     
-    console.log('✅ MAXIMUM ACCURACY HTTP processing initialized');
-    console.log('🎯 INTELLIGENT SENTENCES: Smart sentence completion with enhanced thought detection');
-    console.log('🔧 SINGLE SPEAKER OPTIMIZED: Focused on maximum accuracy for individual audio stream');
-    console.log('⚡ FAST RESPONSE: Complete sentences every 2-3 seconds, smart timeout at 5 seconds');
+    console.log('✅ ULTRA-SIMPLE AUDIO TRANSCRIPTION initialized');
+    console.log('🎯 PURE AUDIO → TEXT: No speaker detection, no complex features');
+    console.log('🔧 MINIMAL CONFIG: Just audio URL + language + punctuation + best model');
+    console.log('⚡ FAST & RELIABLE: Single audio stream processing every 2-3 seconds');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'MAXIMUM ACCURACY: Single speaker optimized transcription (Railway + AssemblyAI)',
+        message: 'ULTRA-SIMPLE: Pure audio → text transcription (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'http_chunked_intelligent_sentences',
+            method: 'ultra_simple_audio_only',
             interval: '2-3_seconds',
-            smart_timeout: '5_seconds',
+            config: 'minimal',
             features: [
-                'intelligent_sentence_completion', 
-                'complete_thought_detection', 
-                'enhanced_accuracy',
-                'single_speaker_optimized',
-                'smart_punctuation',
-                'business_term_boosting'
+                'audio_to_text',
+                'punctuation',
+                'text_formatting',
+                'best_speech_model'
             ],
-            accuracy_enhancements: [
-                'expanded_vocabulary_boosting',
-                'disfluency_removal',
-                'custom_business_terms',
-                'smart_timeout_completion'
+            removed_complexity: [
+                'speaker_detection',
+                'word_boosting', 
+                'vocabulary_customization',
+                'sentiment_analysis',
+                'entity_detection',
+                'content_safety',
+                'profanity_filtering'
             ],
             platform: 'railway',
-            speaker_optimization: 'single_speaker_focus',
+            approach: 'ultra_simple_audio_only',
             timestamp: new Date().toISOString()
         }
     });
