@@ -1438,7 +1438,7 @@ async function handleTwilioStreamConnection(ws, req) {
                             language_code: 'en', // General English for better accent support
                             punctuate: true,
                             format_text: true,
-                            speech_model: 'best', // Use best model for maximum accuracy and accent support
+                            speech_model: 'universal', // Universal model for better accent recognition
                                             word_boost: [
                                                 // Core business terms
                                                 'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
@@ -1452,7 +1452,12 @@ async function handleTwilioStreamConnection(ws, req) {
                                                 // Email components and individual letters
                                                 'at', 'dot', 'com', 'org', 'net', 'address', 'email', 'is',
                                                 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-                                                'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+                                                'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+                                                // Accent-aware common words & phonetic variations
+                                                'inner', 'under', 'enter', 'inter', 'in', 'an', 'and',
+                                                'alex', 'alax', 'alex', 'aleks', 'alexander', 'alexandra',
+                                                'zero', 'oh', 'nought', 'nil', 'two', 'three', 'four', 'five',
+                                                'six', 'seven', 'eight', 'nine', 'ten', 'hundred', 'thousand'
                                             ],
                                             boost_param: 'high',
                                             disfluencies: false,
@@ -2897,11 +2902,15 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
             // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
             const lowerText = finalText.toLowerCase();
             
-            // 🎯 ENHANCED EMAIL MODE: More flexible triggers for email detection
+            // 🎯 ENHANCED EMAIL MODE: More flexible triggers including phonetic variations
             const emailTriggers = [
                 'my email is', 'my email address is', 'email me at', 'contact me at',
                 'email is', 'my email', 'email address', 'send email to',
-                'reach me at', 'email me', 'my address is'
+                'reach me at', 'email me', 'my address is',
+                // 🎯 PHONETIC VARIATIONS for accent support
+                'me my inner', 'my inner', 'my email', 'me email', 'my mail',
+                'email address', 'mail address', 'contact address', 'send mail',
+                'my address', 'email me', 'mail me', 'contact me'
             ];
             
             const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
@@ -3020,15 +3029,15 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     
     // Optimized processing: Every 2 seconds for real-time, but accumulate for complete sentences
     ws.chunkProcessor = setInterval(async () => {
-        // 🚀 4-SECOND PARALLEL OPTIMIZATION: Enhanced accuracy with immediate parallel processing
-        const minAudioLength = 12800; // 1.6 seconds at 8kHz (minimum for processing)
-        const preferredAudioLength = 32000; // 4 seconds at 8kHz (optimal for complete sentences)
+        // 🚀 ENHANCED PARALLEL OPTIMIZATION: Longer chunks for better accent recognition
+        const minAudioLength = 16000; // 2 seconds at 8kHz (minimum for processing)
+        const preferredAudioLength = 48000; // 6 seconds at 8kHz (better for accent context)
         const timeSinceLastProcess = Date.now() - ws.lastProcessTime;
         
-        // Process every 4 seconds OR when we have enough audio - START IMMEDIATELY without waiting
+        // Process every 6 seconds OR when we have enough audio - Enhanced for accent recognition
         // Parallel processing: don't wait for previous transcripts to complete
         const shouldProcess = ws.chunkBuffer.length >= minAudioLength && 
-                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 4000);
+                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 6000);
         
         if (shouldProcess) {
             try {
@@ -3083,7 +3092,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         language_code: 'en', // Changed from 'en_us' to general English for better accent support
                         punctuate: true,
                         format_text: true,
-                        speech_model: 'best', // Use best model for maximum accuracy and accent support
+                        speech_model: 'universal', // Universal model for better accent recognition
                         
                         // 🎯 AGGRESSIVE WORD BOOSTING: Enhanced for email alphabet detection + accent support
                         word_boost: [
@@ -3112,8 +3121,12 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             'gmail', 'g-mail', 'jemail', 'outlook', 'out-look', 'yahoo', 'ya-hoo',
                             'hotmail', 'hot-mail', 'icloud', 'i-cloud', 'dot-com', 'dotcom',
                             
-                            // Accent-aware common words
-                            'nine', 'nine-nine', 'ninety', 'nineteen', 'number', 'numbers'
+                            // Accent-aware common words & phonetic variations
+                            'nine', 'nine-nine', 'ninety', 'nineteen', 'number', 'numbers',
+                            'inner', 'under', 'enter', 'inter', 'in', 'an', 'and',
+                            'alex', 'alax', 'alex', 'aleks', 'alexander', 'alexandra',
+                            'zero', 'oh', 'nought', 'nil', 'two', 'three', 'four', 'five',
+                            'six', 'seven', 'eight', 'nine', 'ten', 'hundred', 'thousand'
                         ],
                         boost_param: 'high'
                     })
@@ -3215,31 +3228,32 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         }
     }, 1500); // Check every 1.5 seconds for 4-second processing cycles
     
-    console.log('✅ PARALLEL PROCESSING: 4-second audio processing with immediate parallel execution');
-    console.log('🚀 ENHANCED SPEED: Multiple transcripts processing simultaneously');
-    console.log('🔧 OPTIMIZED TIMING: 4-second intervals with no waiting between chunks');
-    console.log('⚡ MAXIMUM EFFICIENCY: Immediate audio processing + parallel completion handling');
+    console.log('✅ ENHANCED PARALLEL PROCESSING: 6-second audio chunks for better accent recognition');
+    console.log('🚀 ACCENT OPTIMIZED: Longer context windows + universal model for better accuracy');
+    console.log('🔧 IMPROVED TIMING: 6-second intervals with enhanced phonetic boosting');
+    console.log('⚡ ACCENT FRIENDLY: Extended processing + parallel completion for better results');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'PARALLEL PROCESSING: 4-second immediate + enhanced accuracy (Railway + AssemblyAI)',
+        message: 'ACCENT OPTIMIZED: 6-second enhanced processing for better accent recognition (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'parallel_4_second_immediate_processing',
-            interval: '4_seconds_parallel',
+            method: 'parallel_6_second_accent_optimized_processing',
+            interval: '6_seconds_parallel_accent_enhanced',
             config: 'maximum_accuracy',
             features: [
                 'audio_to_text',
                 'punctuation', 
                 'text_formatting',
                 'universal_speech_model',
-                'aggressive_word_boosting',
+                'accent_optimized_processing',
+                'phonetic_word_boosting',
                 'parallel_processing',
-                'immediate_chunk_start',
                 'enhanced_email_detection',
-                'speech_error_correction',
-                'disfluency_removal',
-                'auto_highlights'
+                'letter_sequence_reconstruction',
+                'accent_aware_triggers',
+                'extended_context_windows',
+                'speech_error_correction'
             ],
             word_boost_count: '40+ terms',
             custom_vocabulary: 'sounds_like_mapping',
