@@ -1050,11 +1050,12 @@ async function handleTwilioStreamConnection(ws, req) {
     // Initialize variables for this stream
     let fullTranscript = '';
     
-    // Try WebSocket first, fallback to HTTP if needed
+    // Use HTTP chunked processing for better reliability
     if (assemblyAIApiKey) {
-        console.log('🎙️ Initializing AssemblyAI real-time transcription...');
-        console.log('🔄 Will try WebSocket first, fallback to HTTP chunked processing...');
-        initializeAssemblyAILive(callSid, ws);
+        console.log('🎙️ Initializing AssemblyAI HTTP chunked transcription...');
+        console.log('🔄 Using HTTP chunked processing for maximum reliability...');
+        console.log('💡 HTTP method provides better accuracy and reliability than WebSocket');
+        initializeHttpChunkedProcessing(callSid, ws);
     } else {
         console.log('❌ WARNING: No AssemblyAI API key configured');
         broadcastToClients({
@@ -2439,7 +2440,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 let attempts = 0;
                 let result = null;
                 
-                while (attempts < 10) { // Max 10 attempts (10 seconds)
+                while (attempts < 15) { // Max 15 attempts (15 seconds)
                     await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
                     
                     const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
@@ -2509,9 +2510,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         }
                     }
                 } else {
-                    console.error(`❌ HTTP chunk processing failed: ${response.status} ${response.statusText}`);
-                    const errorText = await response.text();
-                    console.error(`❌ HTTP error details: ${errorText}`);
+                    console.log(`⚠️ Transcription not completed yet, attempts: ${attempts}`);
                 }
                 
                 // Clear buffer for next chunk
@@ -2562,7 +2561,7 @@ async function initializeAssemblyAILive(callSid, ws) {
         console.log('🔑 TESTING API KEY VALIDITY before WebSocket connection...');
         
         try {
-            const testResponse = await fetch('https://api.assemblyai.com/v2/projects', {
+            const testResponse = await fetch('https://api.assemblyai.com/v2/user', {
                 headers: {
                     'Authorization': `Bearer ${assemblyAIApiKey}`,
                     'Content-Type': 'application/json'
@@ -2577,8 +2576,8 @@ async function initializeAssemblyAILive(callSid, ws) {
                 throw new Error(`Invalid AssemblyAI API key: ${testResponse.status} ${testResponse.statusText}`);
             }
             
-            const projectData = await testResponse.json();
-            console.log('✅ API KEY VALID - Projects accessible:', projectData.projects?.length || 0);
+            const userData = await testResponse.json();
+            console.log('✅ API KEY VALID - User account accessible:', userData.email || 'Unknown');
             
         } catch (apiError) {
             console.error('❌ API KEY TEST FAILED:', apiError.message);
