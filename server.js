@@ -1395,7 +1395,7 @@ async function handleTwilioStreamConnection(ws, req) {
                                             language_code: 'en_us',
                                             punctuate: true,
                                             format_text: true,
-                                            speech_model: 'best',
+                                            speech_model: 'universal',
                                             word_boost: [
                                                 // Core business terms
                                                 'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
@@ -1410,18 +1410,6 @@ async function handleTwilioStreamConnection(ws, req) {
                                                 'at', 'dot', 'com', 'org', 'net', 'address'
                                             ],
                                             boost_param: 'high',
-                                            custom_vocabulary: [
-                                                {
-                                                    words: ['arrange', 'schedule', 'meeting', 'appointment'],
-                                                    sounds_like: ['arr', 'sch', 'sked', 'meet', 'appoint'],
-                                                    display_as: ['arrange', 'schedule', 'meeting', 'appointment']
-                                                },
-                                                {
-                                                    words: ['email', 'gmail'],
-                                                    sounds_like: ['emal', 'jemail', 'gmal', 'gmail'],
-                                                    display_as: ['email', 'gmail']
-                                                }
-                                            ],
                                             disfluencies: false,
                                             filter_profanity: false,
                                             auto_highlights: true
@@ -2770,7 +2758,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
-                        speech_model: 'best',
+                        speech_model: 'universal',
                         
                         // 🎯 AGGRESSIVE WORD BOOSTING: Much more comprehensive
                         word_boost: [
