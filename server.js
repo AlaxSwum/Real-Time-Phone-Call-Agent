@@ -1,3 +1,4 @@
+// Real-Time Phone Call Agent with AssemblyAI Integration - Force restart for API key update
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -116,6 +117,15 @@ app.use((req, res, next) => {
 // Serve static files from public directory
 app.use(express.static('public'));
 
+// Temporary audio hosting endpoint for AssemblyAI
+app.use('/audio', express.static('/tmp', {
+    maxAge: 300000, // 5 minutes cache
+    setHeaders: (res, path) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'audio/wav');
+    }
+}));
+
 // Global variables for real-time functionality
 let dashboardClients = new Set();
 let activeStreams = new Map();
@@ -139,7 +149,7 @@ async function detectAndProcessIntent(text, callSid) {
     const meetingKeywords = [
         // Exact phrases
         'arrange a meeting',
-        'set up a meeting', 
+        'set up a meeting',
         'schedule a meeting',
         'schedule meeting',
         'have a meeting',
@@ -154,7 +164,7 @@ async function detectAndProcessIntent(text, callSid) {
         'set up a medium',         // Speech-to-text error
         'schedule a medium',       // Speech-to-text error
         'meeting on',
-        'meeting at', 
+        'meeting at',
         'meeting next',
         'a meeting',
         'medium on',               // Speech-to-text error
@@ -1056,18 +1066,18 @@ async function handleTwilioStreamConnection(ws, req) {
         console.log('🔄 Using HTTP chunked processing for maximum reliability...');
         console.log('💡 HTTP method provides better accuracy and reliability than WebSocket');
         initializeHttpChunkedProcessing(callSid, ws);
-    } else {
+                                    } else {
         console.log('❌ WARNING: No AssemblyAI API key configured');
-        broadcastToClients({
+                        broadcastToClients({
             type: 'transcription_unavailable',
             message: 'No real-time transcription available - will analyze recording after call',
-            data: {
-                callSid: callSid,
+                            data: {
+                                callSid: callSid,
                 error: 'No AssemblyAI API key configured',
                 fallbackMethod: 'post_call_recording_analysis',
-                timestamp: new Date().toISOString()
-            }
-        });
+                                timestamp: new Date().toISOString()
+                            }
+                        });
     }
     
     let mediaPacketCount = 0;
@@ -1237,21 +1247,22 @@ async function handleTwilioStreamConnection(ws, req) {
                                     const wavHeader = createWavHeader(ws.chunkBuffer.length);
                                     const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
                                     
-                                    // Upload audio to AssemblyAI
-                                    const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
-                                        method: 'POST',
-                                        headers: {
-                                            'Authorization': `Bearer ${assemblyAIApiKey}`,
-                                            'Content-Type': 'application/octet-stream'
-                                        },
-                                        body: wavFile
-                                    });
+                                    // Save final audio file temporarily
+                                    const fs = require('fs');
+                                    const finalAudioFilename = `final_audio_${callSid}_${Date.now()}.wav`;
+                                    const finalAudioPath = `/tmp/${finalAudioFilename}`;
                                     
-                                    if (!uploadResponse.ok) {
-                                        throw new Error(`Final chunk upload failed: ${uploadResponse.status}`);
-                                    }
+                                    fs.writeFileSync(finalAudioPath, wavFile);
+                                    console.log(`💾 Saved final audio file: ${finalAudioPath}`);
                                     
-                                    const uploadResult = await uploadResponse.json();
+                                    // Create public URL for final chunk
+                                    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+                                    const host = process.env.NODE_ENV === 'production' 
+                                        ? 'real-time-phone-call-agent-production.up.railway.app'
+                                        : 'localhost:3000';
+                                    const finalAudioUrl = `${protocol}://${host}/audio/${finalAudioFilename}`;
+                                    
+                                    console.log(`🔗 Final audio URL: ${finalAudioUrl}`);
                                     
                                     // Request transcription
                                     const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
@@ -1261,7 +1272,7 @@ async function handleTwilioStreamConnection(ws, req) {
                                             'Content-Type': 'application/json'
                                         },
                                         body: JSON.stringify({
-                                            audio_url: uploadResult.upload_url,
+                                            audio_url: finalAudioUrl,
                                             language_code: 'en_us',
                                             punctuate: true,
                                             format_text: true
@@ -1306,6 +1317,14 @@ async function handleTwilioStreamConnection(ws, req) {
                                             
                                             detectAndProcessIntent(transcript, callSid);
                                         }
+                                    }
+                                    
+                                    // Cleanup final audio file
+                                    try {
+                                        fs.unlinkSync(finalAudioPath);
+                                        console.log(`🗑️ Cleaned up final audio file: ${finalAudioFilename}`);
+                                    } catch (cleanupError) {
+                                        console.log(`⚠️ Could not cleanup final file:`, cleanupError.message);
                                     }
                                 } catch (error) {
                                     console.error('❌ Final chunk processing error:', error.message);
@@ -2117,19 +2136,19 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
                 audioBuffer = await retryResponse.buffer();
                 console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio (retry successful)`);
             } else {
-                if (response.status === 401) {
-                    throw new Error(`Authentication failed - check Twilio credentials (${response.status})`);
-                } else if (response.status === 403) {
-                    throw new Error(`Access forbidden - check Twilio permissions (${response.status})`);
-                } else if (response.status === 404) {
-                    throw new Error(`Recording not found - it may not be ready yet (${response.status})`);
-                } else {
-                    throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
-                }
+            if (response.status === 401) {
+                throw new Error(`Authentication failed - check Twilio credentials (${response.status})`);
+            } else if (response.status === 403) {
+                throw new Error(`Access forbidden - check Twilio permissions (${response.status})`);
+            } else if (response.status === 404) {
+                throw new Error(`Recording not found - it may not be ready yet (${response.status})`);
+            } else {
+                throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
             }
+        }
         } else {
             audioBuffer = await response.buffer();
-            console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio`);
+        console.log(`📥 Downloaded ${audioBuffer.length} bytes of audio`);
         }
         
         // For now, return basic analysis without transcription
@@ -2152,49 +2171,49 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
         };
         
         if (openai) {
-            console.log('🧠 Analyzing bridge conversation with OpenAI...');
+        console.log('🧠 Analyzing bridge conversation with OpenAI...');
             try {
-                const aiResponse = await openai.chat.completions.create({
-                    model: "gpt-4o-mini",
-                    messages: [
-                        {
-                            role: "system",
-                            content: `You are an AI assistant analyzing a bridge call conversation between two people. Provide a JSON response with:
-                            {
-                                "conversation_type": "meeting/negotiation/support/consultation/other",
-                                "participants": ["speaker_a_role", "speaker_b_role"],
-                                "key_topics": ["topic1", "topic2"],
-                                "decisions_made": ["decision1", "decision2"],
-                                "action_items": ["action1", "action2"],
-                                "sentiment": "positive/neutral/negative",
-                                "urgency": "low/medium/high",
-                                "follow_up_needed": true/false,
-                                "summary": "brief professional summary of the conversation",
-                                "emails_mentioned": ["email1@domain.com"],
-                                "dates_mentioned": ["next friday", "january 15th"],
-                                "next_steps": "recommended next steps"
-                            }`
-                        },
-                        {
-                            role: "user",
-                            content: `Bridge call conversation transcript: "${transcriptResult.text}"`
-                        }
-                    ],
-                    temperature: 0.2
-                });
-                
-                try {
-                    aiAnalysis = JSON.parse(aiResponse.choices[0].message.content);
-                } catch (parseError) {
-                    aiAnalysis = {
-                        conversation_type: "meeting",
-                        participants: ["speaker_a", "speaker_b"],
-                        key_topics: ["general discussion"],
-                        summary: aiResponse.choices[0].message.content,
-                        sentiment: "neutral",
-                        urgency: "medium",
-                        follow_up_needed: true
-                    };
+        const aiResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                {
+                    role: "system",
+                    content: `You are an AI assistant analyzing a bridge call conversation between two people. Provide a JSON response with:
+                    {
+                        "conversation_type": "meeting/negotiation/support/consultation/other",
+                        "participants": ["speaker_a_role", "speaker_b_role"],
+                        "key_topics": ["topic1", "topic2"],
+                        "decisions_made": ["decision1", "decision2"],
+                        "action_items": ["action1", "action2"],
+                        "sentiment": "positive/neutral/negative",
+                        "urgency": "low/medium/high",
+                        "follow_up_needed": true/false,
+                        "summary": "brief professional summary of the conversation",
+                        "emails_mentioned": ["email1@domain.com"],
+                        "dates_mentioned": ["next friday", "january 15th"],
+                        "next_steps": "recommended next steps"
+                    }`
+                },
+                {
+                    role: "user",
+                    content: `Bridge call conversation transcript: "${transcriptResult.text}"`
+                }
+            ],
+            temperature: 0.2
+        });
+        
+        try {
+            aiAnalysis = JSON.parse(aiResponse.choices[0].message.content);
+        } catch (parseError) {
+            aiAnalysis = {
+                conversation_type: "meeting",
+                participants: ["speaker_a", "speaker_b"],
+                key_topics: ["general discussion"],
+                summary: aiResponse.choices[0].message.content,
+                sentiment: "neutral",
+                urgency: "medium",
+                follow_up_needed: true
+            };
                 }
             } catch (aiError) {
                 console.error('❌ OpenAI analysis failed:', aiError.message);
@@ -2227,7 +2246,7 @@ async function analyzeBridgeRecording({ url, callSid, duration }) {
             timestamp: new Date().toISOString()
         };
     }
-}
+} 
 
 // Create WAV header for PCM audio data
 function createWavHeader(pcmDataLength, sampleRate = 16000, channels = 1, bitsPerSample = 16) {
@@ -2396,22 +2415,23 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
                 
                 // Send to AssemblyAI HTTP API with MAXIMUM ACCURACY settings
-                // Step 1: Upload audio file
-                const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${assemblyAIApiKey}`,
-                        'Content-Type': 'application/octet-stream'
-                    },
-                    body: wavFile
-                });
+                // Step 1: Save audio file temporarily and create public URL
+                const fs = require('fs');
+                const audioFilename = `audio_${callSid}_${ws.chunkCount}_${Date.now()}.wav`;
+                const audioPath = `/tmp/${audioFilename}`;
                 
-                if (!uploadResponse.ok) {
-                    throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
-                }
+                // Save WAV file temporarily
+                fs.writeFileSync(audioPath, wavFile);
+                console.log(`💾 Saved audio file: ${audioPath} (${wavFile.length} bytes)`);
                 
-                const uploadResult = await uploadResponse.json();
-                const audioUrl = uploadResult.upload_url;
+                // Create public URL for AssemblyAI to access
+                const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+                const host = process.env.NODE_ENV === 'production' 
+                    ? 'real-time-phone-call-agent-production.up.railway.app'
+                    : 'localhost:3000';
+                const audioUrl = `${protocol}://${host}/audio/${audioFilename}`;
+                
+                console.log(`🔗 Audio URL for AssemblyAI: ${audioUrl}`);
                 
                 // Step 2: Request transcription
                 const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
@@ -2512,6 +2532,14 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                     }
                 } else {
                     console.log(`⚠️ Transcription not completed yet, attempts: ${attempts}`);
+                }
+                
+                // Cleanup: Delete temporary audio file
+                try {
+                    fs.unlinkSync(audioPath);
+                    console.log(`🗑️ Cleaned up temporary file: ${audioFilename}`);
+                } catch (cleanupError) {
+                    console.log(`⚠️ Could not cleanup file ${audioFilename}:`, cleanupError.message);
                 }
                 
                 // Clear buffer for next chunk
