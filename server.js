@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 
 // AI Service imports
 const OpenAI = require('openai');
@@ -767,6 +768,48 @@ app.get('/health', (req, res) => {
     };
     
     res.json(healthCheck);
+});
+
+// 🎵 AUDIO FILE SERVING: Serve temporary audio files for AssemblyAI download
+app.get('/audio/:filename', (req, res) => {
+    const filename = req.params.filename;
+    const audioPath = `/tmp/${filename}`;
+    
+    console.log(`🎵 AUDIO REQUEST: Serving ${filename} for AssemblyAI download`);
+    
+    try {
+        // Check if file exists
+        if (fs.existsSync(audioPath)) {
+            console.log(`✅ AUDIO FOUND: ${filename} exists, serving to AssemblyAI`);
+            
+            // Set proper headers for WAV files
+            res.setHeader('Content-Type', 'audio/wav');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            
+            // Stream the file
+            const fileStream = fs.createReadStream(audioPath);
+            fileStream.pipe(res);
+            
+            fileStream.on('error', (error) => {
+                console.error(`❌ AUDIO STREAM ERROR: ${filename}:`, error);
+                if (!res.headersSent) {
+                    res.status(500).send('Error streaming audio file');
+                }
+            });
+            
+            fileStream.on('end', () => {
+                console.log(`✅ AUDIO SERVED: ${filename} successfully downloaded by AssemblyAI`);
+            });
+            
+        } else {
+            console.error(`❌ AUDIO NOT FOUND: ${filename} does not exist in /tmp/`);
+            res.status(404).send('Audio file not found');
+        }
+    } catch (error) {
+        console.error(`❌ AUDIO SERVE ERROR: ${filename}:`, error);
+        res.status(500).send('Error serving audio file');
+    }
 });
 
 // Root endpoint - serve dashboard
@@ -3042,17 +3085,19 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 // 🚀 IMMEDIATE PROCESSING: Don't wait for this transcript, start next chunk immediately
                 console.log(`⚡ IMMEDIATE MODE: Chunk ${ws.chunkCount} sent to AssemblyAI, starting next chunk processing`);
                 
+                // 🔧 DELAYED CLEANUP: Don't delete files immediately - AssemblyAI needs time to download them
+                setTimeout(() => {
+                    try {
+                        fs.unlinkSync(audioPath);
+                        console.log(`🗑️ Delayed cleanup: ${audioFilename} (after 60s)`);
+                    } catch (cleanupError) {
+                        console.log(`⚠️ Could not cleanup file ${audioFilename}:`, cleanupError.message);
+                    }
+                }, 60000); // Wait 60 seconds before deleting files
+                
                 // Clear buffer and continue processing immediately (parallel mode)
                 ws.chunkBuffer = Buffer.alloc(0);
                 ws.lastProcessTime = Date.now();
-                
-                // Cleanup: Delete temporary audio file
-                try {
-                    fs.unlinkSync(audioPath);
-                    console.log(`🗑️ Cleaned up temporary file: ${audioFilename}`);
-                } catch (cleanupError) {
-                    console.log(`⚠️ Could not cleanup file ${audioFilename}:`, cleanupError.message);
-                }
                 
                 // Clear buffer and update timing
                 ws.chunkBuffer = Buffer.alloc(0);
