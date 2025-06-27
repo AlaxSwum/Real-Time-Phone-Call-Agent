@@ -2791,21 +2791,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         ],
                         boost_param: 'high',
                         
-                        // 🎯 CUSTOM VOCABULARY: More powerful than word_boost
-                        custom_vocabulary: [
-                            {
-                                words: ['arrange', 'schedule', 'meeting', 'appointment'],
-                                sounds_like: ['arr', 'sch', 'sked', 'meet', 'appoint'],
-                                display_as: ['arrange', 'schedule', 'meeting', 'appointment']
-                            },
-                            {
-                                words: ['email', 'gmail'],
-                                sounds_like: ['emal', 'jemail', 'gmal', 'gmail'],
-                                display_as: ['email', 'gmail']
-                            }
-                        ],
-                        
-                        // ✅ ENHANCED ACCURACY SETTINGS
+                        // ✅ ENHANCED ACCURACY SETTINGS  
                         disfluencies: false,
                         filter_profanity: false,
                         auto_highlights: true
