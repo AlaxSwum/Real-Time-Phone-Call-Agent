@@ -1618,10 +1618,14 @@ function extractEmailFromTranscript(transcript) {
     const normalEmailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
     const normalEmail = text.match(normalEmailRegex);
     if (normalEmail && normalEmail[0]) {
-        // 🎯 FILTER: Avoid false positives like "at@gmail.com" from "at gmail com"
+        // 🎯 ENHANCED FILTER: Avoid false positives
         const email = normalEmail[0];
-        const username = email.split('@')[0];
-        if (username.length >= 3 && username !== 'at') { // Must be at least 3 chars and not just "at"
+        const username = email.split('@')[0].toLowerCase();
+        
+        // List of false positive usernames to reject
+        const falsePositives = ['at', 'me', 'my', 'is', 'isis', 'meme', 'email', 'mail', 'com', 'the', 'and'];
+        
+        if (username.length >= 5 && !falsePositives.includes(username)) {
             return validateAndCleanEmail(email);
         }
     }
@@ -1906,17 +1910,57 @@ function parseSpelledEmail(text) {
 }
 
 // 🎯 ENHANCED: Reconstruct email from fragmented letter sequences
-function reconstructEmailFromLetters(buffer) {
-    console.log(`🔧 RECONSTRUCTING EMAIL from buffer: "${buffer}"`);
+function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
+    console.log(`🔧 RECONSTRUCTING EMAIL from buffer: "${buffer}" (force: ${forceReconstruction})`);
     
     // Remove email trigger words to isolate letters
     let cleanBuffer = buffer.toLowerCase()
-        .replace(/(email\s+is\s+ask|email\s+is\s+at|my\s+email\s+is\s+at|email\s+is|my\s+email)/gi, '')
+        .replace(/(me\s+my\s+email|my\s+email\s+is|email\s+is\s+ask|email\s+is\s+at|email\s+is|my\s+email)/gi, '')
         .trim();
     
     console.log(`🔧 CLEAN BUFFER: "${cleanBuffer}"`);
     
-    // Pattern 1: Extract individual letters followed by domain
+    // 🎯 ENHANCED PATTERN EXTRACTION: Handle comma-separated and spaced letters
+    // Extract all individual letters and numbers from the buffer
+    const letterPattern = /\b([a-z0-9])\b/gi;
+    const allMatches = cleanBuffer.match(letterPattern);
+    
+    if (allMatches && allMatches.length >= 3) {
+        console.log(`🔧 EXTRACTED LETTERS: [${allMatches.join(', ')}]`);
+        
+        // Join all letters to form username
+        let letters = allMatches.join('').toLowerCase();
+        
+        // Remove common false words that might get picked up
+        letters = letters.replace(/(and|at|the|is|my|me|com|gmail|outlook|yahoo)/gi, '');
+        
+        console.log(`🔧 CLEANED LETTERS: "${letters}"`);
+        
+        // Determine domain from buffer
+        let domain = 'gmail.com'; // default
+        const bufferLower = buffer.toLowerCase();
+        if (bufferLower.includes('outlook')) domain = 'outlook.com';
+        else if (bufferLower.includes('yahoo')) domain = 'yahoo.com';
+        else if (bufferLower.includes('hotmail')) domain = 'hotmail.com';
+        
+        // Force reconstruction if we have domain indicators
+        if (forceReconstruction || bufferLower.includes('gmail') || bufferLower.includes('outlook') || bufferLower.includes('yahoo')) {
+            if (letters.length >= 3) {
+                const reconstructed = `${letters}@${domain}`;
+                console.log(`🔧 FORCE RECONSTRUCTED EMAIL: "${reconstructed}"`);
+                return reconstructed;
+            }
+        }
+        
+        // Validate length (reasonable email) for normal reconstruction
+        if (letters.length >= 5 && letters.length <= 25) {
+            const reconstructed = `${letters}@${domain}`;
+            console.log(`🔧 RECONSTRUCTED EMAIL: "${reconstructed}"`);
+            return reconstructed;
+        }
+    }
+    
+    // Pattern 1: Extract individual letters followed by domain (original logic)
     // "N e s W u n Y a e At gmail com" → "neswunyae@gmail.com"
     const letterDomainPattern = /([a-z]\s*){3,}(at\s+gmail|gmail|at\s+outlook|outlook|at\s+yahoo|yahoo)/gi;
     const letterMatch = cleanBuffer.match(letterDomainPattern);
@@ -2927,15 +2971,19 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 ws.emailBuffer += ' ' + finalText;
                 console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                 
-                // Try to extract email from accumulated buffer
-                let possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
+                // 🎯 ENHANCED: Always try reconstruction first, then standard extraction
+                let possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
                 
-                // 🎯 ENHANCED: Try to reconstruct from letter patterns if no email found
+                // If reconstruction fails, try standard extraction (but avoid false positives)
                 if (!possibleEmail) {
-                    possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
+                    const standardEmail = extractEmailFromTranscript(ws.emailBuffer);
+                    // Only accept if it's not a false positive
+                    if (standardEmail && !['meme@gmail.com', 'isis@gmail.com', 'at@gmail.com'].includes(standardEmail.toLowerCase())) {
+                        possibleEmail = standardEmail;
+                    }
                 }
                 
-                if (possibleEmail) {
+                if (possibleEmail && possibleEmail.length >= 8) { // Reasonable email length
                     console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
                     
                     broadcastToClients({
@@ -2955,6 +3003,32 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     ws.emailMode = false;
                     ws.emailBuffer = '';
                 } else {
+                    // Check for potential completion with domain indicator
+                    const lowerBuffer = ws.emailBuffer.toLowerCase();
+                    if (lowerBuffer.includes('gmail') || lowerBuffer.includes('outlook') || lowerBuffer.includes('yahoo')) {
+                        // Try harder reconstruction when we see domain
+                        const forceReconstruct = reconstructEmailFromLetters(ws.emailBuffer, true);
+                        if (forceReconstruct && forceReconstruct.length >= 6) {
+                            console.log(`📧 FORCED EMAIL RECONSTRUCTION: "${forceReconstruct}" from: "${ws.emailBuffer.trim()}"`);
+                            
+                            broadcastToClients({
+                                type: 'email_detected',
+                                message: `Email detected: ${forceReconstruct}`,
+                                data: {
+                                    callSid: callSid,
+                                    email: forceReconstruct,
+                                    source_transcript: ws.emailBuffer.trim(),
+                                    method: 'forced_reconstruction',
+                                    transcript_id: transcriptId,
+                                    timestamp: new Date().toISOString()
+                                }
+                            });
+                            
+                            ws.emailMode = false;
+                            ws.emailBuffer = '';
+                        }
+                    }
+                    
                     // Check for timeout (30 seconds max)
                     const emailElapsed = Date.now() - ws.emailStartTime;
                     if (emailElapsed > 30000) {
