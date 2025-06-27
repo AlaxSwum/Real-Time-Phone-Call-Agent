@@ -139,6 +139,9 @@ async function detectAndProcessIntent(text, callSid) {
         'would like to schedule',
         'want to schedule',
         'like to schedule',
+        'let schedule',            // "i'll let schedule" → "let schedule"
+        'schedule meter',          // Speech-to-text error for "schedule meeting"
+        'schedule a meter',        // Speech-to-text error
         'arrange a medium',        // Speech-to-text error
         'set up a medium',         // Speech-to-text error
         'schedule a medium',       // Speech-to-text error
@@ -2296,8 +2299,8 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 
                 console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
                 
-                // Send to Deepgram HTTP API
-                const response = await fetch('https://api.deepgram.com/v1/listen', {
+                // Send to Deepgram HTTP API with enhanced settings
+                const response = await fetch('https://api.deepgram.com/v1/listen?model=nova-2-phonecall&language=en-US&smart_format=true&punctuate=true&diarize=true&utterances=true', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Token ${deepgramApiKey}`,
@@ -2416,12 +2419,17 @@ async function initializeDeepgramRealtime(callSid, ws) {
         // Use MINIMAL WORKING configuration to test basic functionality
         console.log('🔧 MINIMAL CONFIG: Using simplest possible configuration to test...');
         const deepgramLive = deepgram.listen.live({
-            model: 'nova-2',
-            language: 'en',
+            model: 'nova-2-phonecall',
+            language: 'en-US',
             sample_rate: 8000,
             encoding: 'mulaw',
             channels: 1,
-            interim_results: true
+            interim_results: true,
+            smart_format: true,
+            punctuate: true,
+            diarize: true,
+            vad_events: true,
+            endpointing: 300
         });
 
         let isConnected = false;
