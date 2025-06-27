@@ -1651,6 +1651,12 @@ function extractEmailFromTranscript(transcript) {
     
     // 🚀 MASSIVELY ENHANCED: Email patterns for all speech-to-text errors
     const enhancedEmailPatterns = [
+        // 🎯 FRAGMENTED LETTERS: Handle "My email is f o n O u m p A, e, f" patterns
+        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z]\s*,?\s*){3,15}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal)\s*(dot\s+com|com|token|talking|common|calm)?/gi,
+        
+        // 🎯 VERY FRAGMENTED: Handle sequences like "f o n" "O u m p" "A, e, f" across multiple chunks
+        /(email\s+is\s+)?([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){1,}(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal|at\s*gmail|at\s*outlook)?/gi,
+        
         // 🎯 NEW: Handle "Y a e a j metocom" type patterns (our specific issue)
         /(email\s+is\s+|my\s+email\s+)?([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+(metocom|medocomp|gmail|g\s*mail|jemail|adjimetal|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)?/gi,
         
@@ -1703,6 +1709,26 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/\s+at\s+/gi, '@')
                     .replace(/\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)\s*/gi, '.com')
                     .replace(/\s+dot\s+(com|org|net|edu)/gi, '.$1')
+                    
+                    // 🎯 FRAGMENTED LETTERS: Handle "My email is f o n O u m p A, e, f" patterns
+                    .replace(/(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z]\s*,?\s*){3,15}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal)/gi, function(match) {
+                        // Extract just the letters, removing email context words
+                        let letters = match
+                            .replace(/(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+|at\s+|gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal)/gi, '')
+                            .replace(/[,\s]+/g, '') // Remove commas and spaces
+                            .toLowerCase();
+                        return letters + '@gmail.com';
+                    })
+                    
+                    // 🎯 VERY FRAGMENTED: Handle multiple letter chunks
+                    .replace(/(email\s+is\s+)?([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){2,}([a-z]\s*,?\s*){1,}(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal|at\s*gmail|at\s*outlook)?/gi, function(match) {
+                        // Extract letters and clean up
+                        let letters = match
+                            .replace(/(email\s+is\s+|gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud|metocom|medocomp|adjimetal|at\s*gmail|at\s*outlook)/gi, '')
+                            .replace(/[,\s]+/g, '') // Remove commas and spaces
+                            .toLowerCase();
+                        return letters + '@gmail.com';
+                    })
                     
                     // 🎯 NEW: Handle "Y a e a j metocom" type patterns  
                     .replace(/([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+(metocom|medocomp|gmail|g\s*mail|jemail|adjimetal|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)?/gi, '$1$2$3$4$5@gmail.com')
@@ -2701,6 +2727,8 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     ws.chunkCount = 0;
     ws.sentenceBuffer = ''; // Buffer to accumulate partial sentences
     ws.lastTranscriptTime = Date.now();
+    ws.emailBuffer = ''; // Special buffer for accumulating email fragments
+    ws.emailMode = false; // Flag for when we're collecting email letters
     
     // Process any buffered audio from before HTTP chunked processing was initialized
     if (ws.audioBuffer && ws.audioBuffer.length > 0) {
@@ -2897,21 +2925,69 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                 }
                             });
                             
-                            // 🎯 ENHANCED: Check for email patterns in finalText
-                            const possibleEmail = extractEmailFromTranscript(finalText);
-                            if (possibleEmail) {
-                                console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
+                            // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
+                            const lowerText = finalText.toLowerCase();
+                            
+                            // Check if starting email mode
+                            if (!ws.emailMode && (lowerText.includes('my email is') || lowerText.includes('email is') || lowerText.includes('email address is'))) {
+                                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
+                                ws.emailMode = true;
+                                ws.emailBuffer = finalText; // Start with this text
+                                ws.emailStartTime = Date.now();
+                            }
+                            
+                            // If in email mode, accumulate fragments
+                            if (ws.emailMode) {
+                                ws.emailBuffer += ' ' + finalText;
+                                console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                                 
-                                broadcastToClients({
-                                    type: 'email_detected',
-                                    message: `Email detected: ${possibleEmail}`,
-                                    data: {
-                                        callSid: callSid,
-                                        email: possibleEmail,
-                                        source_transcript: finalText,
-                                        timestamp: new Date().toISOString()
+                                // Try to extract email from accumulated buffer
+                                const possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
+                                if (possibleEmail) {
+                                    console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
+                                    
+                                    broadcastToClients({
+                                        type: 'email_detected',
+                                        message: `Email detected: ${possibleEmail}`,
+                                        data: {
+                                            callSid: callSid,
+                                            email: possibleEmail,
+                                            source_transcript: ws.emailBuffer.trim(),
+                                            method: 'accumulated_fragments',
+                                            timestamp: new Date().toISOString()
+                                        }
+                                    });
+                                    
+                                    // Reset email mode after successful detection
+                                    ws.emailMode = false;
+                                    ws.emailBuffer = '';
+                                } else {
+                                    // Check for timeout (30 seconds max)
+                                    const emailElapsed = Date.now() - ws.emailStartTime;
+                                    if (emailElapsed > 30000) {
+                                        console.log(`📧 EMAIL MODE TIMEOUT: No email found in "${ws.emailBuffer.trim()}" after 30s`);
+                                        ws.emailMode = false;
+                                        ws.emailBuffer = '';
                                     }
-                                });
+                                }
+                            } else {
+                                // Standard email detection for complete sentences
+                                const possibleEmail = extractEmailFromTranscript(finalText);
+                                if (possibleEmail) {
+                                    console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
+                                    
+                                    broadcastToClients({
+                                        type: 'email_detected',
+                                        message: `Email detected: ${possibleEmail}`,
+                                        data: {
+                                            callSid: callSid,
+                                            email: possibleEmail,
+                                            source_transcript: finalText,
+                                            method: 'standard_detection',
+                                            timestamp: new Date().toISOString()
+                                        }
+                                    });
+                                }
                             }
                             
                             // Process for intent detection and AI analysis
@@ -2946,6 +3022,36 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                      forcedSentence.split(' ').length >= 3)) {
                                     forcedSentence += '.';
                                 }
+                            }
+                            
+                            // 🎯 TIMEOUT EMAIL CHECK: Also check email buffer for timeout
+                            if (ws.emailMode && ws.emailBuffer) {
+                                const combinedText = ws.emailBuffer.trim() + ' ' + forcedSentence;
+                                console.log(`📧 EMAIL TIMEOUT: Including email buffer in forced sentence: "${combinedText}"`);
+                                
+                                // Try to extract email from combined text
+                                const timeoutEmail = extractEmailFromTranscript(combinedText);
+                                if (timeoutEmail) {
+                                    console.log(`📧 EMAIL DETECTED ON TIMEOUT: "${timeoutEmail}" from combined: "${combinedText}"`);
+                                    
+                                    broadcastToClients({
+                                        type: 'email_detected',
+                                        message: `Email detected (timeout): ${timeoutEmail}`,
+                                        data: {
+                                            callSid: callSid,
+                                            email: timeoutEmail,
+                                            source_transcript: combinedText,
+                                            method: 'timeout_combined',
+                                            timestamp: new Date().toISOString()
+                                        }
+                                    });
+                                    
+                                    // Reset email mode
+                                    ws.emailMode = false;
+                                    ws.emailBuffer = '';
+                                }
+                                
+                                forcedSentence = combinedText; // Use combined text for broadcast
                             }
                             
                             console.log(`⏰ SMART TIMEOUT: "${forcedSentence}" (${timeSinceLastTranscript}ms wait, ${ws.sentenceBuffer.length} chars)`);
