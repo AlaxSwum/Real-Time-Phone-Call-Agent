@@ -1390,12 +1390,20 @@ async function handleTwilioStreamConnection(ws, req) {
                                             'Content-Type': 'application/json'
                                         },
                                         body: JSON.stringify({
-                                            // 🎯 ULTRA-SIMPLE FINAL CHUNK
+                                            // 🎯 ENHANCED SIMPLE FINAL CHUNK
                                             audio_url: finalAudioUrl,
                                             language_code: 'en_us',
                                             punctuate: true,
                                             format_text: true,
-                                            speech_model: 'best'
+                                            speech_model: 'best',
+                                            word_boost: [
+                                                'email', 'gmail', 'outlook', 'yahoo', 'hotmail',
+                                                'meeting', 'schedule', 'appointment', 'call', 'phone',
+                                                'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
+                                                'thursday', 'friday', 'saturday', 'sunday', 'time'
+                                            ],
+                                            boost_param: 'high',
+                                            disfluencies: false
                                         })
                                     });
                                     
@@ -1630,8 +1638,14 @@ function extractEmailFromTranscript(transcript) {
         return validateAndCleanEmail(spokenEmail[0]);
     }
     
-    // Enhanced pattern for various speech formats
+    // 🚀 ENHANCED: Email patterns including "A app gmail com" format
     const enhancedEmailPatterns = [
+        // 🎯 NEW: "A app gmail com" format (single letter + word + provider + extension)
+        /([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
+        
+        // 🎯 NEW: "my email A app gmail com" with context
+        /(email\s+is\s+|my\s+email\s+|email\s+address\s+is\s+)([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi,
+        
         // "alex at gmail token" format
         /([a-zA-Z0-9._-]+)\s+at\s+(gmail|g\s*mail|jemail|outlook|out\s*look|yahoo|ya\s*hoo|hotmail|hot\s*mail|icloud|i\s*cloud)\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete|dot\s+com)/gi,
         
@@ -1663,6 +1677,10 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/\s+at\s+/gi, '@')
                     .replace(/\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)\s*/gi, '.com')
                     .replace(/\s+dot\s+(com|org|net|edu)/gi, '.$1')
+                    
+                    // 🎯 ENHANCED: Handle "A app gmail com" format
+                    .replace(/([a-z])\s+(app|at|up|app\,|up\,)\s+(gmail|g\s*mail|outlook|yahoo|hotmail)\s+(com|token|talking|common|calm)/gi, '$1@$3.com')
+                    
                     .replace(/g\s*mail/gi, 'gmail')
                     .replace(/jemail/gi, 'gmail')
                     .replace(/out\s*look/gi, 'outlook')
@@ -2710,14 +2728,22 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        // 🎯 ULTRA-SIMPLE AUDIO-ONLY TRANSCRIPTION
+                        // 🎯 ENHANCED SIMPLE: Pure audio + smart accuracy boosting
                         audio_url: audioUrl,
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
-                        speech_model: 'best'
-                        // ✅ That's it! No speaker detection, no complex features
-                        // ✅ Just pure audio → text conversion
+                        speech_model: 'best',
+                        // ✅ ADD BACK: Critical word boosting for accuracy
+                        word_boost: [
+                            'email', 'gmail', 'outlook', 'yahoo', 'hotmail',
+                            'meeting', 'schedule', 'appointment', 'call', 'phone',
+                            'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
+                            'thursday', 'friday', 'saturday', 'sunday', 'time'
+                        ],
+                        boost_param: 'high',
+                        // ✅ SMART: Remove filler words for cleaner transcripts
+                        disfluencies: false
                     })
                 });
                 
@@ -2895,36 +2921,42 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         }
     }, 1200); // Check every 1.2 seconds for faster single speaker response
     
-    console.log('✅ ULTRA-SIMPLE AUDIO TRANSCRIPTION initialized');
-    console.log('🎯 PURE AUDIO → TEXT: No speaker detection, no complex features');
-    console.log('🔧 MINIMAL CONFIG: Just audio URL + language + punctuation + best model');
-    console.log('⚡ FAST & RELIABLE: Single audio stream processing every 2-3 seconds');
+    console.log('✅ ENHANCED SIMPLE AUDIO TRANSCRIPTION initialized');
+    console.log('🎯 PURE AUDIO → TEXT: No speaker detection + smart accuracy boosting');
+    console.log('🔧 OPTIMIZED CONFIG: Core features + word boosting for emails/meetings');
+    console.log('⚡ FAST & ACCURATE: Enhanced transcription every 2-3 seconds with email detection');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'ULTRA-SIMPLE: Pure audio → text transcription (Railway + AssemblyAI)',
+        message: 'ENHANCED SIMPLE: Audio → text + smart accuracy boosting (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'ultra_simple_audio_only',
+            method: 'enhanced_simple_audio_with_boosting',
             interval: '2-3_seconds',
-            config: 'minimal',
+            config: 'optimized_simple',
             features: [
                 'audio_to_text',
                 'punctuation',
                 'text_formatting',
-                'best_speech_model'
+                'best_speech_model',
+                'word_boosting_for_accuracy',
+                'enhanced_email_detection',
+                'disfluency_removal'
+            ],
+            word_boost_terms: [
+                'email', 'gmail', 'outlook', 'yahoo', 'hotmail',
+                'meeting', 'schedule', 'appointment', 'call', 'phone',
+                'time_references'
             ],
             removed_complexity: [
                 'speaker_detection',
-                'word_boosting', 
-                'vocabulary_customization',
                 'sentiment_analysis',
                 'entity_detection',
                 'content_safety',
                 'profanity_filtering'
             ],
             platform: 'railway',
-            approach: 'ultra_simple_audio_only',
+            approach: 'enhanced_simple_with_accuracy_boost',
             timestamp: new Date().toISOString()
         }
     });
