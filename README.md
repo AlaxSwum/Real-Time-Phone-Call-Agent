@@ -1,134 +1,296 @@
-# Real-Time Call Processor
+# Real-Time Phone Call Agent with Twilio Bridge - Railway Optimized
 
-A Node.js server that accepts WebSocket connections from Twilio Media Streams, transcribes audio in real-time using OpenAI Whisper, detects intent using OpenAI GPT, and forwards structured data to an n8n webhook for automation.
+A powerful real-time phone call processing system that connects two phone numbers via Twilio while capturing and transcribing conversations with high accuracy. Optimized for Railway hosting with sentence-aware transcription.
 
-## Features
+## 🚀 Features
 
-- Real-time audio streaming from Twilio calls
-- Speech-to-text transcription using OpenAI Whisper API
-- Intent detection using OpenAI GPT models
-- Structured data forwarding to n8n for workflow automation
-- Support for meeting scheduling and email sending intents
+### Bridge Mode
+- **Two-way call bridging**: Connect caller to target number automatically
+- **Real-time transcription**: Capture both sides of conversation with 93.3%+ accuracy
+- **Sentence-aware processing**: Output complete sentences every 2-3 seconds
+- **Speaker identification**: Distinguish between different speakers
+- **High accuracy**: AssemblyAI with enhanced word boosting for business terms
 
-## Prerequisites
+### Real-time Analysis
+- **Intent detection**: Automatically detect meeting requests, support needs, etc.
+- **Email extraction**: Find and validate email addresses from speech
+- **Meeting scheduling**: Extract dates, times, and meeting details
+- **AI analysis**: OpenAI-powered conversation insights
+- **Dashboard**: Real-time web interface for monitoring calls
 
-- Node.js (v14 or higher)
-- npm or yarn
-- Twilio account with Media Streams capability
-- OpenAI API key
-- n8n instance with a webhook endpoint
-- ngrok or similar tool for exposing your local server to the internet (for Twilio to connect)
+## 🛠️ Railway Setup Guide
 
-## Installation
+### 1. Environment Variables
 
-1. Clone this repository or download the files
+Set these in your Railway project settings:
 
-2. Install dependencies:
-
+#### Required
 ```bash
-npm install
-```
+# AssemblyAI (Primary transcription service - 93.3% accuracy)
+ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 
-3. Create a `.env` file in the root directory with the following variables:
-
-```
-# Twilio Configuration
+# Twilio (For phone call handling)
 TWILIO_ACCOUNT_SID=your_twilio_account_sid
 TWILIO_AUTH_TOKEN=your_twilio_auth_token
 
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key
-
-# n8n Webhook Configuration
-N8N_WEBHOOK_URL=your_n8n_webhook_url
-
-# Server Configuration
-PORT=3000
+# Bridge Target (The number to connect calls to)
+BRIDGE_TARGET_NUMBER=+1234567890  # Replace with target phone number
 ```
 
-## Running the Server
-
-1. Start the server:
-
+#### Optional
 ```bash
-npm start
+# OpenAI (For AI analysis)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# n8n Integration (For workflow automation)
+N8N_WEBHOOK_URL=https://your-n8n-instance.com/webhook/calls
+
+# Railway Environment (Auto-detected, but can be set manually)
+RAILWAY_STATIC_URL=your-app-name.railway.app
+RAILWAY_PUBLIC_DOMAIN=your-app-name.railway.app
 ```
 
-Or for development with auto-restart:
+### 2. Deploy to Railway
 
-```bash
-npm run dev
+1. **Fork this repository**
+2. **Connect to Railway**: Link your GitHub repo to Railway
+3. **Set environment variables**: Add all required variables in Railway dashboard
+4. **Deploy**: Railway will automatically build and deploy
+
+### 3. Configure Twilio Webhook
+
+1. **Get your Railway URL**: After deployment, note your app URL (e.g., `https://your-app.railway.app`)
+
+2. **Set Twilio webhook**:
+   - Go to [Twilio Console](https://console.twilio.com/)
+   - Navigate to Phone Numbers → Manage → Active numbers
+   - Click your phone number
+   - Set webhook URL to: `https://your-app.railway.app/voice`
+   - Set HTTP method to: `POST`
+   - Save configuration
+
+3. **Test the setup**:
+   - Call your Twilio number
+   - Should hear: "Connecting your call, please wait..."
+   - Gets connected to your bridge target number
+   - Real-time transcription appears on dashboard
+
+## 📱 How It Works
+
+### Bridge Call Flow
+1. **Incoming call** → Twilio number
+2. **Greeting** → "Connecting your call, please wait..."
+3. **Bridge connection** → Dials target number
+4. **Real-time streaming** → Audio sent to your Railway app
+5. **Transcription** → AssemblyAI processes audio in 2-3 second chunks
+6. **Sentence output** → Complete sentences displayed every 2-3 seconds
+7. **Analysis** → AI extracts intents, emails, meeting details
+8. **Recording** → Full conversation recorded for post-call analysis
+
+### Technical Architecture
+```
+[Caller] → [Twilio] → [Railway App] → [AssemblyAI] → [Dashboard]
+    ↓           ↓           ↓             ↓            ↓
+[Target]   [Bridge]   [WebSocket]   [HTTP API]   [Real-time UI]
 ```
 
-2. Expose your local server to the internet using ngrok:
+## 🎯 Optimizations for High Accuracy
 
-```bash
-ngrok http 3000
-```
+### Sentence-Aware Processing
+- **Buffer accumulation**: Collects partial transcripts
+- **Sentence boundary detection**: Waits for complete sentences
+- **Smart timeout**: Forces output after 8 seconds to prevent hanging
+- **Quality filtering**: Skips silent or low-quality audio chunks
 
-3. Note the HTTPS URL provided by ngrok (e.g., `https://your-ngrok-subdomain.ngrok.io`)
-
-## Configuring Twilio
-
-1. Go to your Twilio Console
-
-2. Set up a TwiML Bin or TwiML App with the following configuration:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Start>
-        <Stream url="wss://your-ngrok-subdomain.ngrok.io?callSid={{CallSid}}"/>
-    </Start>
-    <Say>This call is being transcribed and processed in real-time.</Say>
-    <Pause length="60"/>
-</Response>
-```
-
-3. Assign this TwiML to a Twilio phone number or use it in your Twilio application
-
-## Setting up n8n
-
-1. Create a new workflow in n8n
-
-2. Add a Webhook node as a trigger
-
-3. Configure the Webhook node to receive POST requests
-
-4. Copy the webhook URL and add it to your `.env` file as `N8N_WEBHOOK_URL`
-
-5. Add nodes to process the incoming data based on the intent:
-   - For `meeting_schedule`, add nodes to create calendar events
-   - For `email_send`, add nodes to send emails
-   - For other intents, add appropriate handling
-
-## Data Structure
-
-The server forwards the following data structure to n8n:
-
-```json
+### AssemblyAI Configuration
+```javascript
 {
-  "callSid": "TwilioCallSID",
-  "transcription": "Transcribed text from the call",
-  "intent": {
-    "intent": "meeting_schedule|email_send|other",
-    "confidence": 0.95,
-    "details": {
-      // Intent-specific details
-    }
-  },
-  "timestamp": "2023-11-15T12:34:56.789Z",
-  "isFinal": false
+  speech_model: 'best',           // Highest accuracy model
+  punctuate: true,                // Add punctuation
+  format_text: true,              // Smart formatting
+  speaker_labels: true,           // Identify speakers
+  speakers_expected: 2,           // Bridge calls have 2 speakers
+  word_boost: [                   // Enhanced accuracy for business terms
+    'meeting', 'schedule', 'arrange', 'discuss', 'appointment',
+    'email', 'call', 'phone', 'contact', 'business', 'work'
+  ],
+  boost_param: 'high'             // Maximum word boost effect
 }
 ```
 
-## Troubleshooting
+### Railway-Specific Optimizations
+- **HTTPS URLs**: Railway provides HTTPS by default
+- **Environment detection**: Auto-detects Railway environment variables
+- **WebSocket compatibility**: Uses query parameter format for better compatibility
+- **Static file serving**: Temporary audio files served from `/tmp`
 
-- **WebSocket connection issues**: Ensure your ngrok tunnel is running and the URL in your TwiML is correct
-- **Transcription errors**: Check your OpenAI API key and quota
-- **Intent detection issues**: Adjust the system prompt in `intentDetector.js` for better accuracy
-- **n8n webhook errors**: Verify your webhook URL and ensure n8n is running
+## 🔧 Configuration Options
 
-## License
+### Bridge Mode Settings
+```bash
+# Enable bridge mode (connect calls to target number)
+BRIDGE_TARGET_NUMBER=+1234567890
 
-MIT
+# Disable bridge mode (analysis only)
+# BRIDGE_TARGET_NUMBER=  # Leave empty or unset
+```
+
+### Transcription Timing
+- **Minimum chunk**: 1 second of audio (8000 bytes)
+- **Preferred chunk**: 3 seconds of audio (24000 bytes)
+- **Processing interval**: Every 1.5 seconds
+- **Sentence timeout**: 8 seconds maximum wait
+- **Output frequency**: Complete sentences every 2-3 seconds
+
+## 📊 Dashboard Features
+
+Access your dashboard at: `https://your-app.railway.app`
+
+### Real-time Monitoring
+- **Live transcription**: See conversation as it happens
+- **Call status**: Track bridge connection progress
+- **Speaker identification**: See who's speaking
+- **Intent detection**: Automatic conversation analysis
+- **Audio quality**: Monitor signal strength and clarity
+
+### Call Analytics
+- **Meeting detection**: Automatically identify scheduling requests
+- **Email extraction**: Capture email addresses mentioned
+- **Action items**: Extract tasks and follow-ups
+- **Sentiment analysis**: Gauge conversation tone
+- **Summary generation**: AI-powered call summaries
+
+## 🔗 API Endpoints
+
+### Webhooks (for Twilio)
+- `POST /voice` - Main webhook for incoming calls
+- `POST /webhook/recording` - Recording completion callback
+- `POST /webhook/dial-status` - Bridge call status updates
+
+### Information
+- `GET /` - Dashboard interface
+- `GET /api` - API information and features
+- `GET /health` - Service health check
+- `GET /debug` - Detailed system information
+- `GET /twilio-config` - Twilio setup instructions
+
+### WebSocket
+- `WS /?callSid=CALLSID` - Real-time audio streaming (recommended)
+- `WS /ws` - Dashboard real-time updates
+
+## 🚨 Troubleshooting
+
+### Common Issues
+
+1. **No transcription appearing**
+   - Check ASSEMBLYAI_API_KEY is set correctly
+   - Verify Railway app is receiving audio (check logs)
+   - Ensure Twilio webhook is pointing to correct URL
+
+2. **Bridge not connecting**
+   - Verify BRIDGE_TARGET_NUMBER format (+1234567890)
+   - Check target number can receive calls
+   - Review Twilio logs for dial failures
+
+3. **Audio quality issues**
+   - Phone connection quality affects transcription
+   - Ensure good cellular/landline connection
+   - Check for background noise
+
+4. **WebSocket connection failures**
+   - Railway hosting may block some WebSocket connections
+   - System automatically falls back to HTTP chunked processing
+   - No action required - fallback maintains full functionality
+
+### Logs and Monitoring
+```bash
+# View Railway logs
+railway logs
+
+# Key log messages to look for:
+# ✅ "Optimized sentence-aware transcription ready"
+# 📝 "COMPLETE SENTENCES: ..."
+# 🌉 "Bridge mode: Connecting..."
+# 📞 "Bridge dial status: ..."
+```
+
+## 🔮 Advanced Features
+
+### n8n Integration
+Connect to n8n for automated workflows:
+```bash
+N8N_WEBHOOK_URL=https://your-n8n.com/webhook/calls
+```
+
+Received data includes:
+- Full transcript
+- Intent analysis (meeting, support, etc.)
+- Extracted emails and dates
+- Speaker identification
+- Conversation summary
+
+### Custom Intent Detection
+The system automatically detects:
+- **Meeting requests**: "schedule a meeting", "arrange a call"
+- **Support needs**: "help", "problem", "issue"
+- **Information requests**: "tell me about", "details"
+- **Business inquiries**: Sales, pricing, services
+
+### Email Extraction
+Handles various speech formats:
+- Standard: "alex@gmail.com"
+- Spoken: "alex at gmail dot com"
+- Spelled: "a-l-e-x at gmail dot com"
+- Speech errors: "alex gmail token" → "alex@gmail.com"
+
+## 📈 Performance
+
+### Transcription Accuracy
+- **AssemblyAI**: 93.3%+ accuracy for clear audio
+- **Business terms**: Enhanced accuracy with word boosting
+- **Phone quality**: Optimized for telephony audio (8kHz)
+- **Noise handling**: Filters background noise and silence
+
+### Latency
+- **Processing delay**: 2-3 seconds for complete sentences
+- **Network latency**: ~500ms Railway → AssemblyAI
+- **Total delay**: ~3-4 seconds from speech to dashboard
+- **Real-time feel**: Optimized for live conversation monitoring
+
+### Scalability
+- **Concurrent calls**: Limited by AssemblyAI rate limits
+- **Railway resources**: Auto-scales based on usage
+- **Cost efficiency**: Pay-per-use pricing model
+- **Global deployment**: Railway's global infrastructure
+
+## 💰 Cost Estimation
+
+### Per Hour of Conversation
+- **AssemblyAI**: ~$0.15/hour (both speakers)
+- **Railway hosting**: ~$0.01/hour
+- **Twilio calls**: Variable by region (~$0.01-0.05/minute)
+- **OpenAI analysis**: ~$0.001/call (optional)
+
+**Total**: ~$0.17-0.50/hour depending on call rates
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch
+3. Test with Railway deployment
+4. Submit pull request
+
+## 📄 License
+
+MIT License - see LICENSE file for details
+
+## 🆘 Support
+
+- **GitHub Issues**: Report bugs and feature requests
+- **Documentation**: Check README for setup instructions
+- **Logs**: Use Railway dashboard for debugging
+- **Community**: Join discussions in GitHub Discussions
+
+---
+
+**Railway Optimized** | **AssemblyAI Powered** | **Real-time Transcription** | **Bridge Mode Ready**

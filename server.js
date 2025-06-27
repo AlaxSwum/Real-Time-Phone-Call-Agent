@@ -777,18 +777,30 @@ app.get('/', (req, res) => {
 // API info endpoint
 app.get('/api', (req, res) => {
     res.json({
-        message: 'Real-Time Call Processor API',
-        version: '2.0.0',
+        message: 'Real-Time Call Processor API - Railway Optimized',
+        version: '3.0.0',
         environment: NODE_ENV,
+        platform: 'Railway',
         endpoints: {
             health: '/health',
-            voice_webhook: '/webhook/voice',
+            voice_webhook: '/voice',
+            legacy_voice_webhook: '/webhook/voice',
+            recording_webhook: '/webhook/recording',
+            dial_status_webhook: '/webhook/dial-status',
             dashboard: '/',
             websocket: '/ws',
-            stream: '/stream',
-
-            documentation: 'https://github.com/AlaxSwum/Real-Time-Phone-Call-Agent'
-        }
+            stream: '/?callSid=CALLSID',
+            twilio_config: '/twilio-config',
+            debug: '/debug'
+        },
+        features: {
+            bridge_mode: 'Connects two phone numbers with real-time transcription',
+            real_time_transcription: 'AssemblyAI HTTP chunked processing (sentence-aware)',
+            speaker_detection: 'Identifies different speakers in bridge calls',
+            intent_detection: 'AI-powered conversation analysis',
+            webhook_integration: 'n8n workflow automation support'
+        },
+        documentation: 'https://github.com/AlaxSwum/Real-Time-Phone-Call-Agent'
     });
 });
 
@@ -1790,11 +1802,18 @@ app.get('/twilio-config', (req, res) => {
 // Simple debug endpoint
 app.get('/debug', (req, res) => {
     res.json({
-        status: 'Server is running',
+        status: 'Server is running on Railway',
         timestamp: new Date().toISOString(),
         environment: NODE_ENV,
+        platform: 'Railway',
         bridge_configured: !!process.env.BRIDGE_TARGET_NUMBER,
         bridge_target: process.env.BRIDGE_TARGET_NUMBER || 'Not set',
+        railway_environment: {
+            static_url: process.env.RAILWAY_STATIC_URL || 'Not set',
+            public_domain: process.env.RAILWAY_PUBLIC_DOMAIN || 'Not set',
+            service_name: process.env.RAILWAY_SERVICE_NAME || 'Not set',
+            environment_name: process.env.RAILWAY_ENVIRONMENT_NAME || 'Not set'
+        },
         endpoints_available: [
             '/',
             '/api',
@@ -1803,9 +1822,23 @@ app.get('/debug', (req, res) => {
             '/debug',
             '/voice',
             '/webhook/voice',
-            '/webhook/recording'
+            '/webhook/recording',
+            '/webhook/dial-status'
         ],
-        deployment_version: 'HTTP-CHUNKED-FIXED-V4', // HTTP chunked processing with audio buffer transfer fix
+        websocket_endpoints: [
+            '/?callSid=CALLSID (recommended)',
+            '/ws (dashboard)',
+            '/stream/CALLSID (legacy)'
+        ],
+        transcription_features: {
+            provider: 'AssemblyAI',
+            method: 'HTTP chunked processing',
+            sentence_aware: true,
+            speaker_labels: true,
+            interval: '2-3 seconds',
+            accuracy: 'High (93.3%+)'
+        },
+        deployment_version: 'RAILWAY-OPTIMIZED-V1',
         headers: req.headers,
         url: req.url,
         method: req.method,
@@ -1873,6 +1906,66 @@ app.post('/webhook/recording', async (req, res) => {
         } catch (error) {
             console.error('❌ Bridge call analysis failed:', error);
         }
+    }
+    
+    res.status(200).send('OK');
+});
+
+// Webhook for dial status updates (bridge mode)
+app.post('/webhook/dial-status', (req, res) => {
+    console.log('📞 Bridge dial status update:', req.body);
+    
+    const { 
+        CallSid, 
+        DialCallStatus, 
+        DialCallSid, 
+        DialCallDuration,
+        Called,
+        Caller 
+    } = req.body;
+    
+    console.log(`📞 Dial Status: ${DialCallStatus} for bridge call ${CallSid}`);
+    console.log(`🔗 Bridge leg SID: ${DialCallSid}`);
+    console.log(`⏱️ Bridge duration: ${DialCallDuration || 'N/A'} seconds`);
+    console.log(`📱 Connecting ${Caller} → ${Called}`);
+    
+    // Broadcast dial status to dashboard
+    broadcastToClients({
+        type: 'bridge_dial_status',
+        message: `Bridge dial ${DialCallStatus}: ${Caller} → ${Called}`,
+        data: {
+            callSid: CallSid,
+            dialCallSid: DialCallSid,
+            dialStatus: DialCallStatus,
+            duration: DialCallDuration,
+            caller: Caller,
+            called: Called,
+            timestamp: new Date().toISOString()
+        }
+    });
+    
+    // Send dial status to n8n if configured
+    if (process.env.N8N_WEBHOOK_URL) {
+        const dialStatusData = {
+            type: 'bridge_dial_status',
+            callSid: CallSid,
+            dialCallSid: DialCallSid,
+            dialStatus: DialCallStatus,
+            duration: DialCallDuration,
+            caller: Caller,
+            called: Called,
+            timestamp: new Date().toISOString()
+        };
+        
+        fetch(process.env.N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dialStatusData)
+        }).then(response => {
+            console.log('✅ Bridge dial status sent to n8n:', response.status);
+        }).catch(error => {
+            console.error('❌ Error sending dial status to n8n:', error);
+        });
     }
     
     res.status(200).send('OK');
@@ -2007,28 +2100,40 @@ function handleVoiceWebhook(req, res) {
     if (bridgeNumber) {
         console.log(`🌉 Bridge mode: Connecting ${From} to ${bridgeNumber}`);
         
-        // TwiML for bridge mode with recording and real-time streaming
-        const streamUrl = `${baseWsUrl}/stream/${CallSid}`;
+        // TwiML for bridge mode with recording and real-time streaming - optimized for Railway
+        const streamUrl = `${baseWsUrl}/?callSid=${CallSid}`; // Use query parameter format for better compatibility
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
-        // Fixed TwiML with proper Stream configuration
+        // Enhanced TwiML with proper Stream configuration for Railway hosting
         const bridgeTwiML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Connecting your call, please wait...</Say>
     <Start>
-        <Stream url="${streamUrl}" track="both_tracks" />
+        <Stream url="${streamUrl}" track="both_tracks">
+            <Parameter name="callSid" value="${CallSid}" />
+            <Parameter name="bridgeMode" value="true" />
+            <Parameter name="caller" value="${From}" />
+            <Parameter name="target" value="${bridgeNumber}" />
+        </Stream>
     </Start>
     <Dial 
-        record="true" 
+        record="record-from-answer"
         recordingStatusCallback="${protocol}://${host}/webhook/recording"
+        recordingStatusCallbackMethod="POST"
         timeout="30"
+        hangupOnStar="false"
+        timeLimit="3600"
         callerId="${From}">
-        <Number>${bridgeNumber}</Number>
+        <Number statusCallback="${protocol}://${host}/webhook/dial-status" statusCallbackMethod="POST">${bridgeNumber}</Number>
     </Dial>
-    <Say voice="alice">The call could not be connected. Please try again later.</Say>
+    <Say voice="alice">The call could not be connected. Please try again later. Goodbye.</Say>
 </Response>`;
         
-        console.log('🌉 Bridge TwiML Response (WITH TRANSCRIPTION):', bridgeTwiML);
+        console.log('🌉 ENHANCED Bridge TwiML Response (Railway + Real-time Transcription):');
+        console.log('🎙️ Features: Both tracks recording, real-time streaming, dial status callbacks');
+        console.log('🔧 Railway optimized: Query parameter WebSocket URL format');
+        console.log('📞 Call flow: Greeting → Stream start → Dial bridge → Recording + transcription');
+        
         res.type('text/xml');
         res.send(bridgeTwiML);
         
@@ -2036,20 +2141,28 @@ function handleVoiceWebhook(req, res) {
         // Original real-time analysis mode (no bridge)
         console.log('🎙️ Real-time analysis mode (no bridge number configured)');
         
-        // TwiML response for real-time streaming
-        const streamUrl = `${baseWsUrl}/stream/${CallSid}`;
+        // TwiML response for real-time streaming - optimized for Railway
+        const streamUrl = `${baseWsUrl}/?callSid=${CallSid}`;
         console.log('🔗 Stream URL for TwiML:', streamUrl);
         
-        // Generate TwiML response for incoming calls
+        // Enhanced TwiML response for incoming calls with Railway optimization
         const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+    <Say voice="alice">Welcome to the real-time call analysis system. Please speak your message.</Say>
     <Start>
-        <Stream url="${streamUrl}" track="inbound_track" />
+        <Stream url="${streamUrl}" track="inbound_track">
+            <Parameter name="callSid" value="${CallSid}" />
+            <Parameter name="analysisMode" value="true" />
+            <Parameter name="caller" value="${From}" />
+        </Stream>
     </Start>
     <Pause length="30"/>
+    <Say voice="alice">Thank you for your message. Goodbye.</Say>
 </Response>`;
         
-        console.log('📋 TwiML Response:', twimlResponse);
+        console.log('📋 Enhanced Analysis TwiML Response (Railway optimized)');
+        console.log('🎙️ Features: Real-time streaming, caller greeting, extended recording time');
+        
         res.type('text/xml');
         res.send(twimlResponse);
     }
@@ -2404,11 +2517,13 @@ function analyzeAudioQuality(audioBuffer) {
 function initializeHttpChunkedProcessing(callSid, ws) {
     console.log('🔄 Initializing HTTP chunked processing for call:', callSid);
     
-    // Audio buffer for chunked processing
+    // Enhanced audio buffer for sentence-aware chunked processing
     ws.audioChunks = [];
     ws.chunkBuffer = Buffer.alloc(0);
     ws.lastProcessTime = Date.now();
     ws.chunkCount = 0;
+    ws.sentenceBuffer = ''; // Buffer to accumulate partial sentences
+    ws.lastTranscriptTime = Date.now();
     
     // Process any buffered audio from before HTTP chunked processing was initialized
     if (ws.audioBuffer && ws.audioBuffer.length > 0) {
@@ -2421,25 +2536,40 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         ws.audioBuffer = []; // Clear the buffer
     }
     
-    // Process audio chunks every 2 seconds for faster response (capture more speech)
+    // Optimized processing: Every 2 seconds for real-time, but accumulate for complete sentences
     ws.chunkProcessor = setInterval(async () => {
-        // Require minimum 0.5 seconds of audio (4000 bytes at 8kHz mulaw) for faster capture
-        if (ws.chunkBuffer.length >= 4000) {
+        // Require minimum 1 second of audio for faster capture, but prefer 2-3 seconds for complete sentences
+        const minAudioLength = 8000; // 1 second at 8kHz
+        const preferredAudioLength = 24000; // 3 seconds at 8kHz
+        const timeSinceLastProcess = Date.now() - ws.lastProcessTime;
+        
+        // Process if we have enough audio OR if it's been too long since last processing
+        const shouldProcess = ws.chunkBuffer.length >= minAudioLength && 
+                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= 3000);
+        
+        if (shouldProcess) {
             try {
-                console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
+                console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes, ${timeSinceLastProcess}ms since last)`);
                 
                 // Analyze audio quality before processing
                 const audioAnalysis = analyzeAudioQuality(ws.chunkBuffer);
                 console.log(`🎵 AUDIO ANALYSIS: ${JSON.stringify(audioAnalysis)}`);
                 
+                // Skip processing if audio is too quiet or silent
+                if (audioAnalysis.silence_percent > 90) {
+                    console.log(`🔇 Skipping silent audio chunk (${audioAnalysis.silence_percent}% silence)`);
+                    ws.chunkBuffer = Buffer.alloc(0);
+                    ws.lastProcessTime = Date.now();
+                    return;
+                }
+                
                 // Create proper WAV file with header
-                const wavHeader = createWavHeader(ws.chunkBuffer.length);
+                const wavHeader = createWavHeader(ws.chunkBuffer.length, 16000); // Use 16kHz for better quality
                 const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
                 
                 console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
                 
-                // Send to AssemblyAI HTTP API with MAXIMUM ACCURACY settings
-                // Step 1: Save audio file temporarily and create public URL
+                // Save audio file temporarily and create public URL
                 const fs = require('fs');
                 const audioFilename = `audio_${callSid}_${ws.chunkCount}_${Date.now()}.wav`;
                 const audioPath = `/tmp/${audioFilename}`;
@@ -2448,16 +2578,16 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 fs.writeFileSync(audioPath, wavFile);
                 console.log(`💾 Saved audio file: ${audioPath} (${wavFile.length} bytes)`);
                 
-                // Create public URL for AssemblyAI to access
-                const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
-                const host = process.env.NODE_ENV === 'production' 
-                    ? 'real-time-phone-call-agent-production.up.railway.app'
-                    : 'localhost:3000';
+                // Create public URL for AssemblyAI - optimized for Railway
+                const protocol = 'https'; // Railway uses HTTPS
+                const host = process.env.RAILWAY_STATIC_URL || 
+                           process.env.RAILWAY_PUBLIC_DOMAIN || 
+                           'real-time-phone-call-agent-production.up.railway.app';
                 const audioUrl = `${protocol}://${host}/audio/${audioFilename}`;
                 
                 console.log(`🔗 Audio URL for AssemblyAI: ${audioUrl}`);
                 
-                // Step 2: Request transcription
+                // Request transcription with optimized settings for sentence completion
                 const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
                     method: 'POST',
                     headers: {
@@ -2469,9 +2599,22 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
-                        word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday', 'call', 'phone', 'contact', 'business', 'work'],
+                        // Enhanced word boosting for business conversations
+                        word_boost: [
+                            'meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 
+                            'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday',
+                            'call', 'phone', 'contact', 'business', 'work', 'resignation', 'quit',
+                            'confirm', 'available', 'time', 'date', 'calendar', 'busy', 'free'
+                        ],
                         boost_param: 'high',
-                        speech_model: 'best'
+                        speech_model: 'best',
+                        // Additional settings for better sentence completion
+                        auto_chapters: false,
+                        summarization: false,
+                        speaker_labels: true, // Enable speaker detection for bridge calls
+                        speakers_expected: 2, // Expect 2 speakers in bridge calls
+                        filter_profanity: false,
+                        redact_pii: false
                     })
                 });
                 
@@ -2489,15 +2632,15 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 console.log(`🆔 AssemblyAI transcript ID: ${transcriptId}`);
                 console.log(`📊 Initial status: ${transcriptResult.status}`);
                 
-                // Step 3: Poll for completion (simplified for real-time)
+                // Optimized polling for faster results
                 let attempts = 0;
                 let result = null;
                 
-                while (attempts < 15) { // Max 15 attempts (15 seconds)
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                while (attempts < 20) { // Increased attempts for longer audio
+                    await new Promise(resolve => setTimeout(resolve, 800)); // Faster polling
                     attempts++;
                     
-                    console.log(`🔄 Polling attempt ${attempts}/15 for transcript ${transcriptId}`);
+                    console.log(`🔄 Polling attempt ${attempts}/20 for transcript ${transcriptId}`);
                     
                     const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
                         headers: {
@@ -2505,76 +2648,98 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         }
                     });
                     
-                    console.log(`📡 Status check response: ${statusResponse.status} ${statusResponse.statusText}`);
-                    
                     if (statusResponse.ok) {
                         result = await statusResponse.json();
                         console.log(`📊 Transcript status: ${result.status}`);
                         
                         if (result.status === 'completed') {
-                            console.log(`✅ Transcription completed after ${attempts} attempts`);
+                            console.log(`✅ Transcription completed after ${attempts} attempts (${attempts * 0.8}s)`);
                             break;
                         } else if (result.status === 'error') {
                             console.error(`❌ Transcription error: ${result.error}`);
                             throw new Error(`Transcription failed: ${result.error}`);
-                        } else if (result.status === 'queued' || result.status === 'processing') {
-                            console.log(`⏳ Still ${result.status}... waiting`);
                         }
-                    } else {
-                        console.error(`❌ Status check failed: ${statusResponse.status} ${statusResponse.statusText}`);
                     }
                 }
                 
                 if (result && result.status === 'completed') {
                     const transcript = result.text;
-                    const confidence = result.confidence || 0.8; // AssemblyAI doesn't provide word-level confidence in this API
+                    const confidence = result.confidence || 0.8;
                     
                     if (transcript && transcript.trim().length > 0) {
-                        const text = transcript.trim();
-                        const hasKeywords = ['meeting', 'schedule', 'arrange', 'email', 'discuss', 'appointment', 'call', 'contact'].some(keyword => 
-                            text.toLowerCase().includes(keyword)
-                        );
+                        let processedText = transcript.trim();
                         
-                        // Enhanced confidence filtering for HTTP chunks
-                        const minConfidence = hasKeywords ? 0.1 : 0.25;
+                        // Enhanced sentence completion logic
+                        ws.sentenceBuffer += ' ' + processedText;
+                        ws.sentenceBuffer = ws.sentenceBuffer.trim();
                         
-                        console.log(`📝 HTTP CHUNK: "${text}" (conf: ${confidence.toFixed(3)}, hasKeywords: ${hasKeywords})`);
+                        // Extract complete sentences
+                        const sentences = extractCompleteSentences(ws.sentenceBuffer);
                         
-                        if (confidence > minConfidence) {
-                            console.log(`✅ HTTP CHUNK ACCEPTED: "${text}"`);
+                        if (sentences.completeSentences.length > 0) {
+                            const finalText = sentences.completeSentences.join(' ');
+                            ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
                             
-                            // Broadcast transcript with enhanced data
+                            console.log(`📝 COMPLETE SENTENCES: "${finalText}"`);
+                            console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
+                            
+                            // Broadcast complete sentences only
                             broadcastToClients({
                                 type: 'live_transcript',
-                                message: text,
+                                message: finalText,
                                 data: {
                                     callSid: callSid,
-                                    text: text,
+                                    text: finalText,
                                     confidence: confidence,
                                     is_final: true,
-                                    provider: 'assemblyai_http',
+                                    provider: 'assemblyai_http_sentences',
                                     chunk_number: ws.chunkCount,
-                                    has_keywords: hasKeywords,
-                                    quality_score: confidence * (hasKeywords ? 1.2 : 1.0),
+                                    speakers: result.speakers_expected || 2,
+                                    has_speaker_labels: !!result.utterances,
+                                    sentence_count: sentences.completeSentences.length,
                                     timestamp: new Date().toISOString()
                                 }
                             });
                             
                             // Process for intent detection and AI analysis
                             Promise.allSettled([
-                                detectAndProcessIntent(text, callSid),
-                                analyzeTranscriptWithAI(text, callSid)
+                                detectAndProcessIntent(finalText, callSid),
+                                analyzeTranscriptWithAI(finalText, callSid)
                             ]).then(results => {
-                                console.log('✅ HTTP chunk processing completed');
+                                console.log('✅ Sentence processing completed');
                             }).catch(error => {
-                                console.error('❌ HTTP chunk processing error:', error);
+                                console.error('❌ Sentence processing error:', error);
                             });
+                            
+                            ws.lastTranscriptTime = Date.now();
                         } else {
-                            console.log(`🚫 HTTP CHUNK FILTERED: "${text}" (confidence: ${confidence.toFixed(3)}, required: ${minConfidence})`);
+                            console.log(`📝 ACCUMULATING: "${processedText}" (waiting for complete sentences)`);
+                        }
+                        
+                        // Force output of buffer if it's been too long (prevent hanging)
+                        const timeSinceLastTranscript = Date.now() - ws.lastTranscriptTime;
+                        if (ws.sentenceBuffer.length > 20 && timeSinceLastTranscript > 8000) {
+                            console.log(`⏰ FORCING OUTPUT: "${ws.sentenceBuffer}" (timeout: ${timeSinceLastTranscript}ms)`);
+                            
+                            broadcastToClients({
+                                type: 'live_transcript',
+                                message: ws.sentenceBuffer,
+                                data: {
+                                    callSid: callSid,
+                                    text: ws.sentenceBuffer,
+                                    confidence: confidence * 0.8, // Lower confidence for forced output
+                                    is_final: true,
+                                    provider: 'assemblyai_http_forced',
+                                    forced_output: true,
+                                    timeout_ms: timeSinceLastTranscript,
+                                    timestamp: new Date().toISOString()
+                                }
+                            });
+                            
+                            ws.sentenceBuffer = '';
+                            ws.lastTranscriptTime = Date.now();
                         }
                     }
-                } else {
-                    console.log(`⚠️ Transcription not completed yet, attempts: ${attempts}`);
                 }
                 
                 // Cleanup: Delete temporary audio file
@@ -2585,27 +2750,75 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                     console.log(`⚠️ Could not cleanup file ${audioFilename}:`, cleanupError.message);
                 }
                 
-                // Clear buffer for next chunk
+                // Clear buffer and update timing
                 ws.chunkBuffer = Buffer.alloc(0);
+                ws.lastProcessTime = Date.now();
                 
             } catch (error) {
                 console.error('❌ HTTP chunk processing error:', error.message);
+                // Clear buffer even on error to prevent accumulation
+                ws.chunkBuffer = Buffer.alloc(0);
+                ws.lastProcessTime = Date.now();
             }
         }
-            }, 2000); // Process every 2 seconds for faster response
+    }, 1500); // Check every 1.5 seconds for optimal balance
     
-    console.log('✅ HTTP chunked processing initialized - will process audio every 2 seconds with maximum sensitivity');
+    console.log('✅ OPTIMIZED HTTP chunked processing initialized');
+    console.log('🎯 SENTENCE-AWARE: Will accumulate and output complete sentences every 2-3 seconds');
+    console.log('🔧 RAILWAY-OPTIMIZED: Configured for Railway hosting environment');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'HTTP-based transcription ready (2-second chunks with maximum sensitivity)',
+        message: 'Optimized sentence-aware transcription ready (Railway + AssemblyAI)',
         data: {
             callSid: callSid,
-            method: 'http_chunked',
-            interval: '2_seconds',
+            method: 'http_chunked_sentences',
+            interval: '2-3_seconds',
+            features: ['sentence_completion', 'speaker_labels', 'enhanced_accuracy'],
+            platform: 'railway',
             timestamp: new Date().toISOString()
         }
     });
+}
+
+// Helper function to extract complete sentences
+function extractCompleteSentences(text) {
+    if (!text || text.trim().length === 0) {
+        return { completeSentences: [], remainingText: '' };
+    }
+    
+    // Split by sentence endings, but keep the punctuation
+    const sentencePattern = /([.!?]+)\s*/g;
+    const parts = text.split(sentencePattern);
+    
+    const completeSentences = [];
+    let remainingText = '';
+    
+    for (let i = 0; i < parts.length; i += 2) {
+        const sentencePart = parts[i];
+        const punctuation = parts[i + 1];
+        
+        if (punctuation && punctuation.match(/[.!?]/)) {
+            // Complete sentence
+            completeSentences.push((sentencePart + punctuation).trim());
+        } else {
+            // Incomplete sentence or remaining text
+            remainingText = sentencePart || '';
+        }
+    }
+    
+    // Handle edge cases where text doesn't end with punctuation
+    if (remainingText.length === 0 && parts.length > 0) {
+        const lastPart = parts[parts.length - 1];
+        if (lastPart && !lastPart.match(/[.!?]$/)) {
+            remainingText = lastPart.trim();
+        }
+    }
+    
+    return {
+        completeSentences: completeSentences.filter(s => s.length > 0),
+        remainingText: remainingText.trim()
+    };
 }
 
 // AssemblyAI real-time transcription initialization

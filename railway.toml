@@ -1,0 +1,27 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[environments.production]
+[environments.production.variables]
+NODE_ENV = "production"
+PORT = "3000"
+
+[environments.staging]
+[environments.staging.variables]
+NODE_ENV = "staging"
+PORT = "3000"
+
+# Railway will automatically detect and use package.json start script
+# Ensure the following environment variables are set in Railway dashboard:
+# ASSEMBLYAI_API_KEY - Your AssemblyAI API key
+# BRIDGE_TARGET_NUMBER - Target phone number for bridge calls
+# TWILIO_ACCOUNT_SID - Your Twilio Account SID
+# TWILIO_AUTH_TOKEN - Your Twilio Auth Token
+# OPENAI_API_KEY - Optional, for AI analysis
+# N8N_WEBHOOK_URL - Optional, for n8n integration 
