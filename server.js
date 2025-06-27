@@ -2324,8 +2324,15 @@ function convertMulawToLinear16(mulawBuffer) {
         const mulawValue = mulawBuffer[i];
         const linearValue = mulawToLinear[mulawValue];
         
-        // Apply basic noise gate (reduce very low amplitude noise)
-        const cleanedValue = Math.abs(linearValue) < 50 ? 0 : linearValue;
+        // Apply gentler noise gate for phone calls (preserve more audio)
+        let cleanedValue = Math.abs(linearValue) < 20 ? 0 : linearValue;
+        
+        // Amplify low-volume phone audio (boost by 1.5x for better recognition)
+        if (cleanedValue !== 0) {
+            cleanedValue = Math.round(cleanedValue * 1.5);
+            // Prevent clipping
+            cleanedValue = Math.max(-32767, Math.min(32767, cleanedValue));
+        }
         
         // Write each sample twice for 2x upsampling with slight interpolation
         const outputIndex = i * 4;
@@ -2334,7 +2341,13 @@ function convertMulawToLinear16(mulawBuffer) {
         // Interpolate next sample for smoother upsampling
         const nextMulawValue = i < mulawBuffer.length - 1 ? mulawBuffer[i + 1] : mulawValue;
         const nextLinearValue = mulawToLinear[nextMulawValue];
-        const nextCleanedValue = Math.abs(nextLinearValue) < 50 ? 0 : nextLinearValue;
+        let nextCleanedValue = Math.abs(nextLinearValue) < 20 ? 0 : nextLinearValue;
+        
+        // Amplify next sample too
+        if (nextCleanedValue !== 0) {
+            nextCleanedValue = Math.round(nextCleanedValue * 1.5);
+            nextCleanedValue = Math.max(-32767, Math.min(32767, nextCleanedValue));
+        }
         const interpolatedValue = Math.round((cleanedValue + nextCleanedValue) / 2);
         
         upsampledBuffer.writeInt16LE(interpolatedValue, outputIndex + 2);
@@ -2410,8 +2423,8 @@ function initializeHttpChunkedProcessing(callSid, ws) {
     
     // Process audio chunks every 3 seconds for better accuracy (longer context)
     ws.chunkProcessor = setInterval(async () => {
-        // Require minimum 1 second of audio (8000 bytes at 8kHz mulaw) for better context
-        if (ws.chunkBuffer.length >= 8000) {
+        // Require minimum 0.75 seconds of audio (6000 bytes at 8kHz mulaw) for phone calls
+        if (ws.chunkBuffer.length >= 6000) {
             try {
                 console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
                 
