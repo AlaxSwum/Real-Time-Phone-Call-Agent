@@ -2731,7 +2731,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         auto_chapters: false,
                         summarization: false,
                         speaker_labels: false, // DISABLED - focus on single speaker
-                        speakers_expected: 1, // Single speaker optimization
+                        // speakers_expected removed - incompatible with speaker_labels: false
                         filter_profanity: false,
                         redact_pii: false,
                         // Enhanced accuracy settings for single stream
@@ -2828,7 +2828,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                     is_final: true,
                                     provider: 'assemblyai_http_sentences',
                                     chunk_number: ws.chunkCount,
-                                    speakers: result.speakers_expected || 2,
+                                    speakers: 1, // Single speaker optimization
                                     has_speaker_labels: !!result.utterances,
                                     sentence_count: sentences.completeSentences.length,
                                     timestamp: new Date().toISOString()
