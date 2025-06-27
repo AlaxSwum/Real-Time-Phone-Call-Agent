@@ -1282,52 +1282,50 @@ async function handleTwilioStreamConnection(ws, req) {
                                         })
                                     });
                                     
-                                    if (transcriptResponse.ok) {
-                                        const transcriptResult = await transcriptResponse.json();
+                                    console.log(`📡 AssemblyAI transcription request: ${transcriptResponse.status} ${transcriptResponse.statusText}`);
+                                    
+                                    if (!transcriptResponse.ok) {
+                                        const errorText = await transcriptResponse.text();
+                                        console.error(`❌ Transcription request failed: ${transcriptResponse.status} - ${errorText}`);
+                                        throw new Error(`Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText} - ${errorText}`);
+                                    }
+                                    
+                                    const transcriptResult = await transcriptResponse.json();
+                                    
+                                    // Simple polling for final chunk (max 5 seconds)
+                                    let finalResult = null;
+                                    for (let i = 0; i < 5; i++) {
+                                        await new Promise(resolve => setTimeout(resolve, 1000));
                                         
-                                        // Simple polling for final chunk (max 5 seconds)
-                                        let finalResult = null;
-                                        for (let i = 0; i < 5; i++) {
-                                            await new Promise(resolve => setTimeout(resolve, 1000));
-                                            
-                                            const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptResult.id}`, {
-                                                headers: { 'Authorization': `Bearer ${assemblyAIApiKey}` }
-                                            });
-                                            
-                                            if (statusResponse.ok) {
-                                                finalResult = await statusResponse.json();
-                                                if (finalResult.status === 'completed') break;
-                                            }
-                                        }
+                                        const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptResult.id}`, {
+                                            headers: { 'Authorization': `Bearer ${assemblyAIApiKey}` }
+                                        });
                                         
-                                        const transcript = finalResult?.text;
-                                        
-                                        if (transcript && transcript.trim().length > 0) {
-                                            console.log(`📝 FINAL CHUNK TRANSCRIPT: "${transcript}"`);
-                                            
-                                            broadcastToClients({
-                                                type: 'live_transcript',
-                                                message: transcript,
-                                                data: {
-                                                    callSid: callSid,
-                                                    text: transcript,
-                                                    confidence: result.confidence || 0,
-                                                    is_final: true,
-                                                    provider: 'assemblyai_http_final',
-                                                    timestamp: new Date().toISOString()
-                                                }
-                                            });
-                                            
-                                            detectAndProcessIntent(transcript, callSid);
+                                        if (statusResponse.ok) {
+                                            finalResult = await statusResponse.json();
+                                            if (finalResult.status === 'completed') break;
                                         }
                                     }
                                     
-                                    // Cleanup final audio file
-                                    try {
-                                        fs.unlinkSync(finalAudioPath);
-                                        console.log(`🗑️ Cleaned up final audio file: ${finalAudioFilename}`);
-                                    } catch (cleanupError) {
-                                        console.log(`⚠️ Could not cleanup final file:`, cleanupError.message);
+                                    const transcript = finalResult?.text;
+                                    
+                                    if (transcript && transcript.trim().length > 0) {
+                                        console.log(`📝 FINAL CHUNK TRANSCRIPT: "${transcript}"`);
+                                        
+                                        broadcastToClients({
+                                            type: 'live_transcript',
+                                            message: transcript,
+                                            data: {
+                                                callSid: callSid,
+                                                text: transcript,
+                                                confidence: result.confidence || 0,
+                                                is_final: true,
+                                                provider: 'assemblyai_http_final',
+                                                timestamp: new Date().toISOString()
+                                            }
+                                        });
+                                        
+                                        detectAndProcessIntent(transcript, callSid);
                                     }
                                 } catch (error) {
                                     console.error('❌ Final chunk processing error:', error.message);
@@ -2464,12 +2462,19 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                     })
                 });
                 
+                console.log(`📡 AssemblyAI transcription request: ${transcriptResponse.status} ${transcriptResponse.statusText}`);
+                
                 if (!transcriptResponse.ok) {
-                    throw new Error(`Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText}`);
+                    const errorText = await transcriptResponse.text();
+                    console.error(`❌ Transcription request failed: ${transcriptResponse.status} - ${errorText}`);
+                    throw new Error(`Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText} - ${errorText}`);
                 }
                 
                 const transcriptResult = await transcriptResponse.json();
                 const transcriptId = transcriptResult.id;
+                
+                console.log(`🆔 AssemblyAI transcript ID: ${transcriptId}`);
+                console.log(`📊 Initial status: ${transcriptResult.status}`);
                 
                 // Step 3: Poll for completion (simplified for real-time)
                 let attempts = 0;
@@ -2477,6 +2482,9 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 
                 while (attempts < 15) { // Max 15 attempts (15 seconds)
                     await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                    attempts++;
+                    
+                    console.log(`🔄 Polling attempt ${attempts}/15 for transcript ${transcriptId}`);
                     
                     const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
                         headers: {
@@ -2484,16 +2492,24 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         }
                     });
                     
+                    console.log(`📡 Status check response: ${statusResponse.status} ${statusResponse.statusText}`);
+                    
                     if (statusResponse.ok) {
                         result = await statusResponse.json();
+                        console.log(`📊 Transcript status: ${result.status}`);
+                        
                         if (result.status === 'completed') {
+                            console.log(`✅ Transcription completed after ${attempts} attempts`);
                             break;
                         } else if (result.status === 'error') {
+                            console.error(`❌ Transcription error: ${result.error}`);
                             throw new Error(`Transcription failed: ${result.error}`);
+                        } else if (result.status === 'queued' || result.status === 'processing') {
+                            console.log(`⏳ Still ${result.status}... waiting`);
                         }
+                    } else {
+                        console.error(`❌ Status check failed: ${statusResponse.status} ${statusResponse.statusText}`);
                     }
-                    
-                    attempts++;
                 }
                 
                 if (result && result.status === 'completed') {
