@@ -2266,6 +2266,50 @@ function convertMulawToLinear16(mulawBuffer) {
     return upsampledBuffer;
 }
 
+// Audio quality analysis function
+function analyzeAudioQuality(audioBuffer) {
+    if (!audioBuffer || audioBuffer.length === 0) {
+        return { error: 'No audio data' };
+    }
+    
+    // Calculate basic audio statistics
+    let sum = 0;
+    let sumSquares = 0;
+    let min = 32767;
+    let max = -32768;
+    let silentSamples = 0;
+    
+    // Analyze as 16-bit samples
+    for (let i = 0; i < audioBuffer.length - 1; i += 2) {
+        const sample = audioBuffer.readInt16LE(i);
+        sum += sample;
+        sumSquares += sample * sample;
+        min = Math.min(min, sample);
+        max = Math.max(max, sample);
+        
+        if (Math.abs(sample) < 100) { // Very quiet threshold
+            silentSamples++;
+        }
+    }
+    
+    const sampleCount = Math.floor(audioBuffer.length / 2);
+    const mean = sum / sampleCount;
+    const variance = (sumSquares / sampleCount) - (mean * mean);
+    const rms = Math.sqrt(variance);
+    const silencePercentage = (silentSamples / sampleCount) * 100;
+    
+    return {
+        bytes: audioBuffer.length,
+        samples: sampleCount,
+        duration_ms: Math.round((sampleCount / 16000) * 1000), // Assuming 16kHz
+        rms_level: Math.round(rms),
+        peak_level: Math.max(Math.abs(min), Math.abs(max)),
+        silence_percent: Math.round(silencePercentage * 100) / 100,
+        has_audio: silencePercentage < 95,
+        quality: rms > 100 ? 'good' : rms > 50 ? 'fair' : 'poor'
+    };
+}
+
 // HTTP-based chunked audio processing fallback
 function initializeHttpChunkedProcessing(callSid, ws) {
     console.log('🔄 Initializing HTTP chunked processing for call:', callSid);
@@ -2287,11 +2331,16 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         ws.audioBuffer = []; // Clear the buffer
     }
     
-    // Process audio chunks every 3 seconds
+    // Process audio chunks every 2 seconds for faster response
     ws.chunkProcessor = setInterval(async () => {
-        if (ws.chunkBuffer.length > 0) {
+        // Require minimum 0.5 seconds of audio (4000 bytes at 8kHz mulaw)
+        if (ws.chunkBuffer.length >= 4000) {
             try {
                 console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
+                
+                // Analyze audio quality before processing
+                const audioAnalysis = analyzeAudioQuality(ws.chunkBuffer);
+                console.log(`🎵 AUDIO ANALYSIS: ${JSON.stringify(audioAnalysis)}`);
                 
                 // Create proper WAV file with header
                 const wavHeader = createWavHeader(ws.chunkBuffer.length);
@@ -2299,8 +2348,8 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 
                 console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
                 
-                // Send to Deepgram HTTP API with enhanced settings
-                const response = await fetch('https://api.deepgram.com/v1/listen?model=nova-2-phonecall&language=en-US&smart_format=true&punctuate=true&diarize=true&utterances=true', {
+                // Send to Deepgram HTTP API with MAXIMUM ACCURACY settings
+                const response = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&punctuate=true&profanity_filter=false&redact=false&utterances=true&keywords=meeting:3,schedule:3,arrange:3,discuss:3,appointment:3,email:3,send:2,tomorrow:2,contact:2', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Token ${deepgramApiKey}`,
@@ -2313,31 +2362,56 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 if (response.ok) {
                     const result = await response.json();
                     const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+                    const confidence = result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0;
                     
                     if (transcript && transcript.trim().length > 0) {
-                        console.log(`📝 HTTP CHUNK TRANSCRIPT: "${transcript}"`);
+                        const text = transcript.trim();
+                        const hasKeywords = ['meeting', 'schedule', 'arrange', 'email', 'discuss', 'appointment', 'call', 'contact'].some(keyword => 
+                            text.toLowerCase().includes(keyword)
+                        );
                         
-                        // Broadcast transcript
-                        broadcastToClients({
-                            type: 'live_transcript',
-                            message: transcript,
-                            data: {
-                                callSid: callSid,
-                                text: transcript,
-                                confidence: result.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0,
-                                is_final: true,
-                                provider: 'deepgram_http',
-                                chunk_number: ws.chunkCount,
-                                timestamp: new Date().toISOString()
-                            }
-                        });
+                        // Enhanced confidence filtering for HTTP chunks
+                        const minConfidence = hasKeywords ? 0.1 : 0.25;
                         
-                        // Process for intent detection
-                        detectAndProcessIntent(transcript, callSid);
-                        analyzeTranscriptWithAI(transcript, callSid);
+                        console.log(`📝 HTTP CHUNK: "${text}" (conf: ${confidence.toFixed(3)}, hasKeywords: ${hasKeywords})`);
+                        
+                        if (confidence > minConfidence) {
+                            console.log(`✅ HTTP CHUNK ACCEPTED: "${text}"`);
+                            
+                            // Broadcast transcript with enhanced data
+                            broadcastToClients({
+                                type: 'live_transcript',
+                                message: text,
+                                data: {
+                                    callSid: callSid,
+                                    text: text,
+                                    confidence: confidence,
+                                    is_final: true,
+                                    provider: 'deepgram_http',
+                                    chunk_number: ws.chunkCount,
+                                    has_keywords: hasKeywords,
+                                    quality_score: confidence * (hasKeywords ? 1.2 : 1.0),
+                                    timestamp: new Date().toISOString()
+                                }
+                            });
+                            
+                            // Process for intent detection and AI analysis
+                            Promise.allSettled([
+                                detectAndProcessIntent(text, callSid),
+                                analyzeTranscriptWithAI(text, callSid)
+                            ]).then(results => {
+                                console.log('✅ HTTP chunk processing completed');
+                            }).catch(error => {
+                                console.error('❌ HTTP chunk processing error:', error);
+                            });
+                        } else {
+                            console.log(`🚫 HTTP CHUNK FILTERED: "${text}" (confidence: ${confidence.toFixed(3)}, required: ${minConfidence})`);
+                        }
                     }
                 } else {
                     console.error(`❌ HTTP chunk processing failed: ${response.status} ${response.statusText}`);
+                    const errorText = await response.text();
+                    console.error(`❌ HTTP error details: ${errorText}`);
                 }
                 
                 // Clear buffer for next chunk
@@ -2347,17 +2421,17 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 console.error('❌ HTTP chunk processing error:', error.message);
             }
         }
-    }, 3000); // Process every 3 seconds
+            }, 2000); // Process every 2 seconds for faster response
     
-    console.log('✅ HTTP chunked processing initialized - will process audio every 3 seconds');
+    console.log('✅ HTTP chunked processing initialized - will process audio every 2 seconds with enhanced accuracy');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'HTTP-based transcription ready (3-second chunks)',
+        message: 'HTTP-based transcription ready (2-second chunks with enhanced accuracy)',
         data: {
             callSid: callSid,
             method: 'http_chunked',
-            interval: '3_seconds',
+            interval: '2_seconds',
             timestamp: new Date().toISOString()
         }
     });
@@ -2412,14 +2486,13 @@ async function initializeDeepgramRealtime(callSid, ws) {
             // Don't throw - try the WebSocket connection anyway
         }
         
-        // Create Deepgram live connection with ENHANCED TROUBLESHOOTING
+        // Create Deepgram live connection with MAXIMUM ACCURACY SETTINGS
         console.log('🔗 Creating Deepgram WebSocket connection...');
-        console.log('🔧 TESTING: mulaw → linear16 with 8kHz → 16kHz upsampling...');
-        console.log('🎯 MODEL: Using enhanced-general model for better compatibility...');
-        // Use MINIMAL WORKING configuration to test basic functionality
-        console.log('🔧 MINIMAL CONFIG: Using simplest possible configuration to test...');
+        console.log('🎯 MAXIMUM ACCURACY: Using nova-2 model with enhanced phone call optimization...');
+        console.log('🔧 ENHANCED AUDIO: Implementing superior audio processing and confidence filtering...');
+        
         const deepgramLive = deepgram.listen.live({
-            model: 'nova-2-phonecall',
+            model: 'nova-2',  // Switch to nova-2 for maximum reliability
             language: 'en-US',
             sample_rate: 8000,
             encoding: 'mulaw',
@@ -2427,9 +2500,40 @@ async function initializeDeepgramRealtime(callSid, ws) {
             interim_results: true,
             smart_format: true,
             punctuate: true,
-            diarize: true,
+            profanity_filter: false,
+            redact: false,
+            diarize: false,  // Disable for single speaker clarity
             vad_events: true,
-            endpointing: 300
+            endpointing: 500,  // Longer endpointing for complete sentences
+            // Enhanced keyword boosting for better accuracy
+            keywords: [
+                'meeting:3',
+                'schedule:3', 
+                'arrange:3',
+                'discuss:3',
+                'appointment:3',
+                'email:3',
+                'send:2',
+                'tomorrow:2',
+                'next week:2',
+                'call back:2',
+                'contact:2',
+                'information:2',
+                'help:2',
+                'support:2'
+            ],
+            // Enhanced search terms for phone call context
+            search: [
+                'meeting',
+                'schedule',
+                'arrange',
+                'email',
+                'appointment',
+                'discuss',
+                'call',
+                'contact',
+                'information'
+            ]
         });
 
         let isConnected = false;
@@ -2514,7 +2618,7 @@ async function initializeDeepgramRealtime(callSid, ws) {
             // Broadcast connection success
             broadcastToClients({
                 type: 'deepgram_connected',
-                message: 'Deepgram enhanced transcription ready (nova-2 with audio monitoring)',
+                message: 'Deepgram MAXIMUM ACCURACY transcription ready (nova-2 with keyword boosting)',
                 data: {
                     callSid: callSid,
                     provider: 'deepgram',
@@ -2522,8 +2626,10 @@ async function initializeDeepgramRealtime(callSid, ws) {
                     encoding: 'mulaw',
                     audio_format: 'raw_mulaw_8khz',
                     sample_rate: 8000,
-                    features: ['vad_events', 'smart_format', 'punctuate', 'audio_analysis'],
-                    optimization: 'enhanced_monitoring',
+                    features: ['vad_events', 'smart_format', 'punctuate', 'keyword_boosting', 'enhanced_confidence_filtering'],
+                    optimization: 'maximum_accuracy',
+                    keywords_boosted: 14,
+                    search_terms: 9,
                     timestamp: new Date().toISOString()
                 }
             });
@@ -2555,37 +2661,50 @@ async function initializeDeepgramRealtime(callSid, ws) {
                     
                     console.log(`🎯 DEEPGRAM TRANSCRIPT: "${transcript.transcript}" (final: ${isFinal}, confidence: ${confidence.toFixed(2)})`);
                     
-                    // Filter low quality transcripts (reduced thresholds for better detection)
-                    if (confidence > 0.1 && transcript.transcript.trim().length > 0) {
-                        console.log(`✅ DEEPGRAM ACCEPTED: "${transcript.transcript}"`);
+                    // Enhanced confidence filtering with dynamic thresholds
+                    const text = transcript.transcript.trim();
+                    const hasKeywords = ['meeting', 'schedule', 'arrange', 'email', 'discuss', 'appointment', 'call', 'contact'].some(keyword => 
+                        text.toLowerCase().includes(keyword)
+                    );
+                    
+                    // Dynamic confidence thresholds - lower for important keywords
+                    const minConfidence = hasKeywords ? 0.05 : 0.15;
+                    const minLength = hasKeywords ? 1 : 2;
+                    
+                    console.log(`🔍 QUALITY CHECK: "${text}" (confidence: ${confidence.toFixed(3)}, hasKeywords: ${hasKeywords}, minConf: ${minConfidence})`);
+                    
+                    if (confidence > minConfidence && text.length >= minLength) {
+                        console.log(`✅ DEEPGRAM ACCEPTED: "${text}" (conf: ${confidence.toFixed(3)})`);
                         
                         // Add to full transcript if final
                         if (isFinal) {
-                            fullTranscript += transcript.transcript + ' ';
+                            fullTranscript += text + ' ';
                         }
                         
-                        // Broadcast to dashboard
+                        // Broadcast to dashboard with enhanced data
                         broadcastToClients({
                             type: 'live_transcript',
-                            message: transcript.transcript,
+                            message: text,
                             data: {
                                 callSid: callSid,
-                                text: transcript.transcript,
+                                text: text,
                                 confidence: confidence,
                                 is_final: isFinal,
                                 provider: 'deepgram',
+                                has_keywords: hasKeywords,
+                                quality_score: confidence * (hasKeywords ? 1.2 : 1.0),
                                 timestamp: new Date().toISOString()
                             }
                         });
                         
-                        // Process final transcripts for intent detection
-                        if (isFinal && transcript.transcript.trim().length > 2) {
+                        // Process final transcripts for intent detection (lower threshold for processing)
+                        if (isFinal && text.length >= 1) {
                             console.log('🧠 Processing Deepgram transcript for intents...');
                             
                             // Run intent detection and AI analysis in parallel
                             Promise.allSettled([
-                                detectAndProcessIntent(transcript.transcript, callSid),
-                                analyzeTranscriptWithAI(transcript.transcript, callSid)
+                                detectAndProcessIntent(text, callSid),
+                                analyzeTranscriptWithAI(text, callSid)
                             ]).then(results => {
                                 console.log('✅ Deepgram transcript processing completed');
                             }).catch(error => {
@@ -2593,7 +2712,7 @@ async function initializeDeepgramRealtime(callSid, ws) {
                             });
                         }
                     } else {
-                        console.log(`🚫 DEEPGRAM FILTERED: "${transcript.transcript}" (confidence: ${confidence.toFixed(2)}, length: ${transcript.transcript.trim().length})`);
+                        console.log(`🚫 DEEPGRAM FILTERED: "${text}" (confidence: ${confidence.toFixed(3)}, length: ${text.length}, required: ${minConfidence})`);
                     }
                 } else {
                     console.log('📥 DEEPGRAM: No transcript in alternatives[0]');
