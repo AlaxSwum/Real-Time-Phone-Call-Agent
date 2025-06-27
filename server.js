@@ -1613,7 +1613,12 @@ function extractEmailFromTranscript(transcript) {
     const normalEmailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
     const normalEmail = text.match(normalEmailRegex);
     if (normalEmail && normalEmail[0]) {
-        return validateAndCleanEmail(normalEmail[0]);
+        // 🎯 FILTER: Avoid false positives like "at@gmail.com" from "at gmail com"
+        const email = normalEmail[0];
+        const username = email.split('@')[0];
+        if (username.length >= 3 && username !== 'at') { // Must be at least 3 chars and not just "at"
+            return validateAndCleanEmail(email);
+        }
     }
     
     // Try spelled email pattern: "j-o-h-n at g-m-a-i-l dot c-o-m"
@@ -1892,6 +1897,90 @@ function parseSpelledEmail(text) {
         return email;
     }
     
+    return null;
+}
+
+// 🎯 ENHANCED: Reconstruct email from fragmented letter sequences
+function reconstructEmailFromLetters(buffer) {
+    console.log(`🔧 RECONSTRUCTING EMAIL from buffer: "${buffer}"`);
+    
+    // Remove email trigger words to isolate letters
+    let cleanBuffer = buffer.toLowerCase()
+        .replace(/(email\s+is\s+ask|email\s+is\s+at|my\s+email\s+is\s+at|email\s+is|my\s+email)/gi, '')
+        .trim();
+    
+    console.log(`🔧 CLEAN BUFFER: "${cleanBuffer}"`);
+    
+    // Pattern 1: Extract individual letters followed by domain
+    // "N e s W u n Y a e At gmail com" → "neswunyae@gmail.com"
+    const letterDomainPattern = /([a-z]\s*){3,}(at\s+gmail|gmail|at\s+outlook|outlook|at\s+yahoo|yahoo)/gi;
+    const letterMatch = cleanBuffer.match(letterDomainPattern);
+    
+    if (letterMatch) {
+        console.log(`🔧 LETTER-DOMAIN MATCH: "${letterMatch[0]}"`);
+        
+        let match = letterMatch[0];
+        
+        // Extract letters (remove domain part first)
+        let letters = match
+            .replace(/(at\s+gmail|gmail|at\s+outlook|outlook|at\s+yahoo|yahoo).*/gi, '')
+            .replace(/\s+/g, '') // Remove all spaces
+            .toLowerCase();
+        
+        // Determine domain from match
+        let domain = 'gmail.com'; // default
+        if (match.includes('outlook')) domain = 'outlook.com';
+        else if (match.includes('yahoo')) domain = 'yahoo.com';
+        
+        const reconstructed = `${letters}@${domain}`;
+        console.log(`🔧 RECONSTRUCTED EMAIL: "${reconstructed}"`);
+        
+        // Validate length (reasonable email)
+        if (letters.length >= 3 && letters.length <= 20) {
+            return reconstructed;
+        }
+    }
+    
+    // Pattern 2: Separate letter chunks with domain at end
+    // "N e W u P y a E at gmail" → "newupyae@gmail.com"
+    const chunks = cleanBuffer.split(/\s+/);
+    let letters = [];
+    let domain = 'gmail.com';
+    
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        
+        // Single letter
+        if (chunk.length === 1 && /[a-z]/i.test(chunk)) {
+            letters.push(chunk.toLowerCase());
+        }
+        // Two-letter chunks like "n e"
+        else if (chunk.length <= 3 && /^[a-z]\s*[a-z]?$/i.test(chunk)) {
+            const cleaned = chunk.replace(/\s+/g, '').toLowerCase();
+            letters.push(...cleaned.split(''));
+        }
+        // Domain indicators
+        else if (chunk.includes('gmail')) {
+            domain = 'gmail.com';
+            break; // Stop collecting letters
+        }
+        else if (chunk.includes('outlook')) {
+            domain = 'outlook.com';
+            break;
+        }
+        else if (chunk.includes('yahoo')) {
+            domain = 'yahoo.com';
+            break;
+        }
+    }
+    
+    if (letters.length >= 3) {
+        const reconstructed = `${letters.join('')}@${domain}`;
+        console.log(`🔧 CHUNK RECONSTRUCTED EMAIL: "${reconstructed}" from letters: [${letters.join(', ')}]`);
+        return reconstructed;
+    }
+    
+    console.log(`🔧 NO EMAIL RECONSTRUCTED from buffer: "${buffer}"`);
     return null;
 }
 
@@ -2808,8 +2897,16 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
             // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
             const lowerText = finalText.toLowerCase();
             
-            // 🎯 STRICT EMAIL MODE: Only activate with very specific triggers
-            if (!ws.emailMode && (lowerText.includes('my email is') || lowerText.includes('my email address is') || lowerText.includes('email me at') || lowerText.includes('contact me at'))) {
+            // 🎯 ENHANCED EMAIL MODE: More flexible triggers for email detection
+            const emailTriggers = [
+                'my email is', 'my email address is', 'email me at', 'contact me at',
+                'email is', 'my email', 'email address', 'send email to',
+                'reach me at', 'email me', 'my address is'
+            ];
+            
+            const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
+            
+            if (!ws.emailMode && hasEmailTrigger) {
                 console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
                 ws.emailMode = true;
                 ws.emailBuffer = finalText; // Start with this text
@@ -2822,7 +2919,13 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                 
                 // Try to extract email from accumulated buffer
-                const possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
+                let possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
+                
+                // 🎯 ENHANCED: Try to reconstruct from letter patterns if no email found
+                if (!possibleEmail) {
+                    possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
+                }
+                
                 if (possibleEmail) {
                     console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
                     
