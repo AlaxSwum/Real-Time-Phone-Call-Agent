@@ -1406,8 +1406,10 @@ async function handleTwilioStreamConnection(ws, req) {
                                                 // Common speech patterns
                                                 'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
                                                 'discuss', 'talk', 'speak', 'contact', 'reach', 'connect',
-                                                // Email components
-                                                'at', 'dot', 'com', 'org', 'net', 'address'
+                                                // Email components and individual letters
+                                                'at', 'dot', 'com', 'org', 'net', 'address', 'email', 'is',
+                                                'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+                                                'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
                                             ],
                                             boost_param: 'high',
                                             disfluencies: false,
@@ -1649,6 +1651,12 @@ function extractEmailFromTranscript(transcript) {
     
     // 🚀 MASSIVELY ENHANCED: Email patterns for all speech-to-text errors
     const enhancedEmailPatterns = [
+        // 🎯 NEW: Handle "Y a e a j metocom" type patterns (our specific issue)
+        /(email\s+is\s+|my\s+email\s+)?([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+(metocom|medocomp|gmail|g\s*mail|jemail|adjimetal|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)?/gi,
+        
+        // 🎯 ENHANCED: Even more individual letters "s w u m p y a e at gmail"
+        /(email\s+is\s+|my\s+email\s+)?([a-z]\s+){4,8}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud)\s*(dot\s+com|com|token|talking|common|calm)/gi,
+        
         // 🎯 ULTRA-GARBLED: "E as the U m E adjimetal Com" format
         /(email\s+is\s+|my\s+email\s+)?([a-z])\s+(as\s+the|at\s+the|app\s+the|at|app|up)?\s*([a-z])\s*(m|n|and|em|um)?\s*([a-z])\s*(adjimetal|adji|gmail|g\s*mail|mail)\s*(com|token|talking|common|calm)/gi,
         
@@ -1696,6 +1704,15 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/\s+(token|talking|common|calm|come|coming|column|commercial|commerce|compact|company|complete)\s*/gi, '.com')
                     .replace(/\s+dot\s+(com|org|net|edu)/gi, '.$1')
                     
+                    // 🎯 NEW: Handle "Y a e a j metocom" type patterns  
+                    .replace(/([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+([a-z])\s+(metocom|medocomp|gmail|g\s*mail|jemail|adjimetal|outlook|yahoo|hotmail)\s*(com|token|talking|common|calm)?/gi, '$1$2$3$4$5@gmail.com')
+                    
+                    // 🎯 ENHANCED: Handle multiple individual letters
+                    .replace(/(([a-z])\s+){4,8}(at\s+|@\s*)?(gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud)\s*(dot\s+com|com|token|talking|common|calm)/gi, function(match) {
+                        const letters = match.replace(/(at\s+|@\s*|dot\s+com|com|token|talking|common|calm|gmail|g\s*mail|jemail|outlook|yahoo|hotmail|icloud)/gi, '').replace(/\s+/g, '');
+                        return letters + '@gmail.com';
+                    })
+                    
                     // 🎯 ULTRA-GARBLED: Handle "E as the U m E adjimetal Com" format
                     .replace(/([a-z])\s+(as\s+the|at\s+the|app\s+the|at|app|up)?\s*([a-z])\s*(m|n|and|em|um)?\s*([a-z])\s*(adjimetal|adji|gmail|g\s*mail|mail)\s*(com|token|talking|common|calm)/gi, '$1$3$5@gmail.com')
                     
@@ -1713,6 +1730,9 @@ function extractEmailFromTranscript(transcript) {
                     .replace(/i\s*cloud/gi, 'icloud')
                     .replace(/proton\s*mail/gi, 'protonmail')
                     .replace(/adjimetal/gi, 'gmail')  // Fix this specific garbled pattern
+                    .replace(/metocom/gi, 'gmail')    // Fix "metocom" → "gmail"
+                    .replace(/medocomp/gi, 'gmail')   // Fix "medocomp" → "gmail"
+                    .replace(/jemail/gi, 'gmail')     // Fix "jemail" → "gmail"
                     .replace(/\s+(and\s+)?/g, ''); // Remove spaces and "and" words
                 
                 // Special handling for spelled out characters
@@ -2760,7 +2780,7 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         format_text: true,
                         speech_model: 'universal',
                         
-                        // 🎯 AGGRESSIVE WORD BOOSTING: Much more comprehensive
+                        // 🎯 AGGRESSIVE WORD BOOSTING: Enhanced for email alphabet detection
                         word_boost: [
                             // Core business terms
                             'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
@@ -2774,8 +2794,16 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                             'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
                             'discuss', 'talk', 'speak', 'contact', 'reach', 'connect',
                             
-                            // Email components
-                            'at', 'dot', 'com', 'org', 'net', 'address'
+                            // Email components and spelled letters
+                            'at', 'dot', 'com', 'org', 'net', 'address', 'email', 'is',
+                            
+                            // ENHANCED: Individual letters for email spelling
+                            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+                            'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+                            
+                            // Common email endings as spoken
+                            'gmail', 'g-mail', 'jemail', 'outlook', 'out-look', 'yahoo', 'ya-hoo',
+                            'hotmail', 'hot-mail', 'icloud', 'i-cloud', 'dot-com', 'dotcom'
                         ],
                         boost_param: 'high',
                         
@@ -2868,6 +2896,23 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                                     timestamp: new Date().toISOString()
                                 }
                             });
+                            
+                            // 🎯 ENHANCED: Check for email patterns in finalText
+                            const possibleEmail = extractEmailFromTranscript(finalText);
+                            if (possibleEmail) {
+                                console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
+                                
+                                broadcastToClients({
+                                    type: 'email_detected',
+                                    message: `Email detected: ${possibleEmail}`,
+                                    data: {
+                                        callSid: callSid,
+                                        email: possibleEmail,
+                                        source_transcript: finalText,
+                                        timestamp: new Date().toISOString()
+                                    }
+                                });
+                            }
                             
                             // Process for intent detection and AI analysis
                             Promise.allSettled([
