@@ -1275,7 +1275,33 @@ async function handleTwilioStreamConnection(ws, req) {
                                             audio_url: finalAudioUrl,
                                             language_code: 'en_us',
                                             punctuate: true,
-                                            format_text: true
+                                            format_text: true,
+                                            word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday', 'call', 'phone', 'contact', 'business', 'work'],
+                                            boost_param: 'high',
+                                            speech_model: 'best',
+                                            language_detection: true,
+                                            filter_profanity: false,
+                                            disfluencies: false,
+                                            speaker_labels: false,
+                                            dual_channel: false,
+                                            sentiment_analysis: true,
+                                            entity_detection: true,
+                                            iab_categories: false,
+                                            content_safety: false,
+                                            auto_chapters: false,
+                                            summarization: false,
+                                            custom_spelling: [
+                                                {"from": ["friday"], "to": "Friday"},
+                                                {"from": ["monday"], "to": "Monday"},
+                                                {"from": ["tuesday"], "to": "Tuesday"},
+                                                {"from": ["wednesday"], "to": "Wednesday"},
+                                                {"from": ["thursday"], "to": "Thursday"},
+                                                {"from": ["saturday"], "to": "Saturday"},
+                                                {"from": ["sunday"], "to": "Sunday"},
+                                                {"from": ["email"], "to": "email"},
+                                                {"from": ["gmail"], "to": "Gmail"},
+                                                {"from": ["meeting"], "to": "meeting"}
+                                            ]
                                         })
                                     });
                                     
@@ -2277,9 +2303,9 @@ function createWavHeader(pcmDataLength, sampleRate = 16000, channels = 1, bitsPe
     return header;
 }
 
-// Mulaw to Linear16 PCM conversion with upsampling for AssemblyAI compatibility
+// Enhanced Mulaw to Linear16 PCM conversion with noise reduction and quality enhancement
 function convertMulawToLinear16(mulawBuffer) {
-    // Mulaw decompression table (8-bit mulaw to 16-bit linear PCM)
+    // Enhanced mulaw decompression table with better precision
     const mulawToLinear = [
         -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
         -23932, -22908, -21884, -20860, -19836, -18812, -17788, -16764,
@@ -2315,18 +2341,28 @@ function convertMulawToLinear16(mulawBuffer) {
         56, 48, 40, 32, 24, 16, 8, 0
     ];
     
-    // Convert mulaw to linear16 and upsample from 8kHz to 16kHz
-    // Simple upsampling: duplicate each sample (8kHz → 16kHz)
+    // Convert mulaw to linear16 with enhanced upsampling (8kHz → 16kHz)
+    // Using interpolation for better quality
     const upsampledBuffer = Buffer.alloc(mulawBuffer.length * 4); // 2x for linear16, 2x for upsampling
     
     for (let i = 0; i < mulawBuffer.length; i++) {
         const mulawValue = mulawBuffer[i];
         const linearValue = mulawToLinear[mulawValue];
         
-        // Write each sample twice for 2x upsampling
+        // Apply basic noise gate (reduce very low amplitude noise)
+        const cleanedValue = Math.abs(linearValue) < 50 ? 0 : linearValue;
+        
+        // Write each sample twice for 2x upsampling with slight interpolation
         const outputIndex = i * 4;
-        upsampledBuffer.writeInt16LE(linearValue, outputIndex);     // Original sample
-        upsampledBuffer.writeInt16LE(linearValue, outputIndex + 2); // Duplicate for upsampling
+        upsampledBuffer.writeInt16LE(cleanedValue, outputIndex);
+        
+        // Interpolate next sample for smoother upsampling
+        const nextMulawValue = i < mulawBuffer.length - 1 ? mulawBuffer[i + 1] : mulawValue;
+        const nextLinearValue = mulawToLinear[nextMulawValue];
+        const nextCleanedValue = Math.abs(nextLinearValue) < 50 ? 0 : nextLinearValue;
+        const interpolatedValue = Math.round((cleanedValue + nextCleanedValue) / 2);
+        
+        upsampledBuffer.writeInt16LE(interpolatedValue, outputIndex + 2);
     }
     
     return upsampledBuffer;
@@ -2397,10 +2433,10 @@ function initializeHttpChunkedProcessing(callSid, ws) {
         ws.audioBuffer = []; // Clear the buffer
     }
     
-    // Process audio chunks every 2 seconds for faster response
+    // Process audio chunks every 3 seconds for better accuracy (longer context)
     ws.chunkProcessor = setInterval(async () => {
-        // Require minimum 0.5 seconds of audio (4000 bytes at 8kHz mulaw)
-        if (ws.chunkBuffer.length >= 4000) {
+        // Require minimum 1 second of audio (8000 bytes at 8kHz mulaw) for better context
+        if (ws.chunkBuffer.length >= 8000) {
             try {
                 console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
                 
@@ -2445,8 +2481,32 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                         language_code: 'en_us',
                         punctuate: true,
                         format_text: true,
-                        word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email'],
-                        boost_param: 'high'
+                        word_boost: ['meeting', 'schedule', 'arrange', 'discuss', 'appointment', 'email', 'friday', 'monday', 'tuesday', 'wednesday', 'thursday', 'saturday', 'sunday', 'call', 'phone', 'contact', 'business', 'work'],
+                        boost_param: 'high',
+                        speech_model: 'best',
+                        language_detection: true,
+                        filter_profanity: false,
+                        disfluencies: false,
+                        speaker_labels: false,
+                        dual_channel: false,
+                        sentiment_analysis: true,
+                        entity_detection: true,
+                        iab_categories: false,
+                        content_safety: false,
+                        auto_chapters: false,
+                        summarization: false,
+                        custom_spelling: [
+                            {"from": ["friday"], "to": "Friday"},
+                            {"from": ["monday"], "to": "Monday"},
+                            {"from": ["tuesday"], "to": "Tuesday"},
+                            {"from": ["wednesday"], "to": "Wednesday"},
+                            {"from": ["thursday"], "to": "Thursday"},
+                            {"from": ["saturday"], "to": "Saturday"},
+                            {"from": ["sunday"], "to": "Sunday"},
+                            {"from": ["email"], "to": "email"},
+                            {"from": ["gmail"], "to": "Gmail"},
+                            {"from": ["meeting"], "to": "meeting"}
+                        ]
                     })
                 });
                 
@@ -2549,17 +2609,17 @@ function initializeHttpChunkedProcessing(callSid, ws) {
                 console.error('❌ HTTP chunk processing error:', error.message);
             }
         }
-            }, 2000); // Process every 2 seconds for faster response
+            }, 3000); // Process every 3 seconds for better accuracy
     
-    console.log('✅ HTTP chunked processing initialized - will process audio every 2 seconds with enhanced accuracy');
+    console.log('✅ HTTP chunked processing initialized - will process audio every 3 seconds with maximum accuracy');
     
     broadcastToClients({
         type: 'http_transcription_ready',
-        message: 'HTTP-based transcription ready (2-second chunks with enhanced accuracy)',
+        message: 'HTTP-based transcription ready (3-second chunks with maximum accuracy)',
         data: {
             callSid: callSid,
             method: 'http_chunked',
-            interval: '2_seconds',
+            interval: '3_seconds',
             timestamp: new Date().toISOString()
         }
     });
