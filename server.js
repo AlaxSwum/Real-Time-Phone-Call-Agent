@@ -1920,10 +1920,26 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
     
     console.log(`🔧 CLEAN BUFFER: "${cleanBuffer}"`);
     
-    // 🎯 ENHANCED PATTERN EXTRACTION: Handle comma-separated and spaced letters
+    // 🎯 ENHANCED PATTERN EXTRACTION: Handle comma-separated and spaced letters + spelled numbers
+    
+    // First, convert spelled-out numbers to digits
+    let processedBuffer = cleanBuffer
+        .replace(/\b(zero|oh)\b/gi, '0')
+        .replace(/\bone\b/gi, '1')
+        .replace(/\btwo\b/gi, '2')
+        .replace(/\bthree\b/gi, '3')
+        .replace(/\bfour\b/gi, '4')
+        .replace(/\bfive\b/gi, '5')
+        .replace(/\bsix\b/gi, '6')
+        .replace(/\bseven\b/gi, '7')
+        .replace(/\beight\b/gi, '8')
+        .replace(/\bnine\b/gi, '9');
+    
+    console.log(`🔧 PROCESSED BUFFER (numbers converted): "${processedBuffer}"`);
+    
     // Extract all individual letters and numbers from the buffer
     const letterPattern = /\b([a-z0-9])\b/gi;
-    const allMatches = cleanBuffer.match(letterPattern);
+    const allMatches = processedBuffer.match(letterPattern);
     
     if (allMatches && allMatches.length >= 3) {
         console.log(`🔧 EXTRACTED LETTERS: [${allMatches.join(', ')}]`);
@@ -2954,10 +2970,20 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 // 🎯 PHONETIC VARIATIONS for accent support
                 'me my inner', 'my inner', 'my email', 'me email', 'my mail',
                 'email address', 'mail address', 'contact address', 'send mail',
-                'my address', 'email me', 'mail me', 'contact me'
+                'my address', 'email me', 'mail me', 'contact me',
+                // 🎯 SENDING PATTERNS
+                'will send to', 'send to', 'sending to', 'email to', 'mail to',
+                'send you', 'send it to', 'send the email to', 'send details to'
             ];
             
             const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
+            
+            // 🎯 DEBUG: Log trigger checking
+            console.log(`🔍 EMAIL TRIGGER CHECK: "${lowerText}" | hasEmailTrigger: ${hasEmailTrigger} | emailMode: ${ws.emailMode}`);
+            if (hasEmailTrigger) {
+                const matchedTrigger = emailTriggers.find(trigger => lowerText.includes(trigger));
+                console.log(`🎯 MATCHED TRIGGER: "${matchedTrigger}"`);
+            }
             
             if (!ws.emailMode && hasEmailTrigger) {
                 console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
@@ -2971,17 +2997,21 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 ws.emailBuffer += ' ' + finalText;
                 console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                 
-                // 🎯 ENHANCED: Always try reconstruction first, then standard extraction
-                let possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
-                
-                // If reconstruction fails, try standard extraction (but avoid false positives)
-                if (!possibleEmail) {
-                    const standardEmail = extractEmailFromTranscript(ws.emailBuffer);
-                    // Only accept if it's not a false positive
-                    if (standardEmail && !['meme@gmail.com', 'isis@gmail.com', 'at@gmail.com'].includes(standardEmail.toLowerCase())) {
-                        possibleEmail = standardEmail;
+                                    // 🎯 ENHANCED: Always try reconstruction first, then standard extraction
+                    console.log(`🔧 ATTEMPTING EMAIL RECONSTRUCTION from buffer: "${ws.emailBuffer.trim()}"`);
+                    let possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
+                    console.log(`🔧 RECONSTRUCTION RESULT: "${possibleEmail}"`);
+                    
+                    // If reconstruction fails, try standard extraction (but avoid false positives)
+                    if (!possibleEmail) {
+                        console.log(`🔧 TRYING STANDARD EXTRACTION as fallback`);
+                        const standardEmail = extractEmailFromTranscript(ws.emailBuffer);
+                        console.log(`🔧 STANDARD EXTRACTION RESULT: "${standardEmail}"`);
+                        // Only accept if it's not a false positive
+                        if (standardEmail && !['meme@gmail.com', 'isis@gmail.com', 'at@gmail.com'].includes(standardEmail.toLowerCase())) {
+                            possibleEmail = standardEmail;
+                        }
                     }
-                }
                 
                 if (possibleEmail && possibleEmail.length >= 8) { // Reasonable email length
                     console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
@@ -3041,20 +3071,28 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 // Standard email detection for complete sentences
                 const possibleEmail = extractEmailFromTranscript(finalText);
                 if (possibleEmail) {
-                    console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
+                    // 🎯 ENHANCED: Filter false positives in standard detection too
+                    const username = possibleEmail.split('@')[0].toLowerCase();
+                    const falsePositives = ['at', 'me', 'my', 'is', 'isis', 'meme', 'email', 'mail', 'com', 'the', 'and'];
                     
-                    broadcastToClients({
-                        type: 'email_detected',
-                        message: `Email detected: ${possibleEmail}`,
-                        data: {
-                            callSid: callSid,
-                            email: possibleEmail,
-                            source_transcript: finalText,
-                            method: 'parallel_standard_detection',
-                            transcript_id: transcriptId,
-                            timestamp: new Date().toISOString()
-                        }
-                    });
+                    if (username.length >= 5 && !falsePositives.includes(username)) {
+                        console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
+                        
+                        broadcastToClients({
+                            type: 'email_detected',
+                            message: `Email detected: ${possibleEmail}`,
+                            data: {
+                                callSid: callSid,
+                                email: possibleEmail,
+                                source_transcript: finalText,
+                                method: 'parallel_standard_detection',
+                                transcript_id: transcriptId,
+                                timestamp: new Date().toISOString()
+                            }
+                        });
+                    } else {
+                        console.log(`📧 BLOCKED FALSE POSITIVE: "${possibleEmail}" from transcript: "${finalText}" (username: "${username}")`);
+                    }
                 }
             }
             
