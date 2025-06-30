@@ -3063,50 +3063,43 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
     try {
         let processedText = transcript.trim();
         
-        // 🚀 CONSERVATIVE SENTENCE BUFFERING: Prevent premature delivery during email spelling
+        // 🚀 AGGRESSIVE 4-SECOND DELIVERY: Always accumulate but deliver every 4 seconds regardless
         ws.sentenceBuffer = (ws.sentenceBuffer || '') + ' ' + processedText;
         ws.sentenceBuffer = ws.sentenceBuffer.trim();
         
         console.log(`🔄 BUFFERING: Added "${processedText}" to buffer: "${ws.sentenceBuffer}"`);
         
-        // 🎯 EMAIL-AWARE TIMEOUT LOGIC: Much longer timeout during email mode
+        // 🎯 AGGRESSIVE 4-SECOND TIMEOUT: Deliver every 4 seconds NO MATTER WHAT
         const bufferAge = Date.now() - (ws.lastTranscriptTime || Date.now());
-        const emailModeTimeout = ws.emailMode ? 15000 : 12000; // 15s during email, 12s normally
-        const forceDelivery = bufferAge > emailModeTimeout;
+        const forceDelivery = bufferAge > 4000; // EXACTLY 4 seconds as user requested
         
-        // Extract complete sentences with more conservative completion
+        // Extract complete sentences (for quality, but don't require them)
         const sentences = extractCompleteSentences(ws.sentenceBuffer);
         
-        // 🚀 MUCH MORE CONSERVATIVE DELIVERY: Only deliver if we have clear complete sentences OR very old buffer
-        const hasCompleteSentences = sentences.completeSentences.length > 0;
-        const isVeryOld = bufferAge > emailModeTimeout;
-        const hasSubstantialContent = ws.sentenceBuffer.split(' ').length >= 10; // Increased from 6 to 10
-        
-        // 🎯 EMAIL PROTECTION: Never deliver during active email spelling unless forced by timeout
-        const isActivelySpellingEmail = ws.emailMode && bufferAge < 10000; // Protect for 10 seconds
-        
-        const shouldDeliver = (hasCompleteSentences || (isVeryOld && hasSubstantialContent)) && !isActivelySpellingEmail;
+        // 🚀 USER REQUEST: Deliver every 4 seconds OR when we have substantial content
+        const hasContent = ws.sentenceBuffer.split(' ').length >= 3; // Deliver if we have 3+ words
+        const shouldDeliver = forceDelivery || hasContent;
         
         if (shouldDeliver) {
             let finalText;
             
-            if (hasCompleteSentences) {
-                // We have complete sentences
+            if (sentences.completeSentences.length > 0) {
+                // We have complete sentences - deliver them and keep remainder
                 finalText = sentences.completeSentences.join(' ');
                 ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
                 console.log(`📝 COMPLETE SENTENCES: "${finalText}"`);
                 console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
             } else {
-                // Force delivery of accumulated buffer due to age
+                // No complete sentences - deliver everything accumulated (user's requirement)
                 finalText = ws.sentenceBuffer;
                 
-                // Add punctuation if missing to make it more complete
+                // Add punctuation if missing to make it more readable
                 if (!finalText.match(/[.!?]$/)) {
                     finalText += '.';
                 }
                 
-                ws.sentenceBuffer = ''; // Clear buffer after forced delivery
-                console.log(`🚨 FORCED DELIVERY: "${finalText}" (age: ${bufferAge}ms)`);
+                ws.sentenceBuffer = ''; // Clear buffer after delivery
+                console.log(`⚡ 4-SECOND DELIVERY: "${finalText}" (age: ${bufferAge}ms)`);
             }
             
             // Broadcast the accumulated text
@@ -3120,31 +3113,31 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     is_final: true,
                     provider: 'assemblyai_http_parallel',
                     transcript_id: transcriptId,
-                    processing_mode: forceDelivery ? 'timeout_forced' : 'complete_sentences',
+                    processing_mode: forceDelivery ? '4_second_forced' : 'content_ready',
                     buffer_age_ms: bufferAge,
-                    email_mode_active: ws.emailMode,
+                    word_count: finalText.split(' ').length,
                     timestamp: new Date().toISOString()
                 }
             });
             
-            // 🎯 ENHANCED EMAIL DETECTION: Much more aggressive email collection
+            // 🎯 ENHANCED EMAIL DETECTION: Still try to detect emails from all content
             const lowerText = finalText.toLowerCase();
             
-            // Enhanced email triggers - be very aggressive about detecting email context
+            // Very aggressive email triggers - catch any hint of email
             const emailTriggers = [
-                'my email', 'email me', 'email is', 'email address', 'contact me',
-                'send email', 'email to', 'reach me', 'my address',
-                // Single letter sequences that suggest email spelling
+                'email', 'mail', 'gmail', 'outlook', 'yahoo', 'hotmail',
+                'my email', 'email is', 'email me', 'send email', 'contact me',
+                // Letter patterns that suggest email spelling
                 'a l', 'l a', 'x e', 'e n', 'n d', 'd e', 'p s', 's 2', '2 0', '0 0', '0 2',
                 // Domain indicators
-                'gmail', 'outlook', 'yahoo', 'hotmail', 'at gmail', 'dot com'
+                'at gmail', 'dot com', 'gmail com'
             ];
             
             const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
             
             console.log(`🔍 EMAIL TRIGGER CHECK: "${lowerText}" | hasEmailTrigger: ${hasEmailTrigger} | emailMode: ${ws.emailMode}`);
             
-            // Start email mode much more aggressively
+            // Start email mode aggressively on any email hint
             if (!ws.emailMode && hasEmailTrigger) {
                 console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
                 ws.emailMode = true;
@@ -3152,12 +3145,12 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 ws.emailStartTime = Date.now();
             }
             
-            // If in email mode, accumulate all fragments
+            // If in email mode, accumulate all content for email reconstruction
             if (ws.emailMode) {
                 ws.emailBuffer += ' ' + finalText;
                 console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                 
-                // Enhanced email reconstruction with more aggressive detection
+                // Try email reconstruction continuously
                 let possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
                 console.log(`🔧 EMAIL RECONSTRUCTION: "${possibleEmail}"`);
                 
@@ -3181,7 +3174,7 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                             callSid: callSid,
                             email: possibleEmail,
                             source_transcript: ws.emailBuffer.trim(),
-                            method: 'enhanced_buffered_accumulation',
+                            method: '4_second_aggressive_accumulation',
                             transcript_id: transcriptId,
                             timestamp: new Date().toISOString()
                         }
@@ -3216,12 +3209,12 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                         }
                     }
                     
-                    // Much longer timeout for email collection (60 seconds)
+                    // Email timeout (30 seconds for aggressive mode)
                     const emailElapsed = Date.now() - ws.emailStartTime;
-                    if (emailElapsed > 60000) {
-                        console.log(`📧 EMAIL TIMEOUT: No complete email found in "${ws.emailBuffer.trim()}" after 60s`);
+                    if (emailElapsed > 30000) {
+                        console.log(`📧 EMAIL TIMEOUT: Attempting final reconstruction from "${ws.emailBuffer.trim()}" after 30s`);
                         
-                        // Try one final reconstruction before giving up
+                        // Final attempt with force reconstruction
                         const finalAttempt = reconstructEmailFromLetters(ws.emailBuffer, true);
                         if (finalAttempt) {
                             console.log(`📧 FINAL EMAIL ATTEMPT: "${finalAttempt}"`);
@@ -3276,15 +3269,7 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
             
             ws.lastTranscriptTime = Date.now();
         } else {
-            console.log(`📝 CONSERVATIVE BUFFERING: "${processedText}" added (${ws.sentenceBuffer.split(' ').length} words, ${bufferAge}ms age, emailMode: ${ws.emailMode})`);
-            
-            // 🎯 EMAIL MODE AUTO-ACTIVATION: Activate email mode early if we see email context
-            if (!ws.emailMode && processedText.toLowerCase().includes('email')) {
-                console.log(`📧 EARLY EMAIL MODE: Detected email context in "${processedText}"`);
-                ws.emailMode = true;
-                ws.emailBuffer = ws.sentenceBuffer; // Use entire buffer
-                ws.emailStartTime = Date.now();
-            }
+            console.log(`📝 ACCUMULATING: "${processedText}" added (${ws.sentenceBuffer.split(' ').length} words, ${bufferAge}ms age)`);
         }
     } catch (error) {
         console.error(`❌ Error processing completed transcript ${transcriptId}:`, error);
