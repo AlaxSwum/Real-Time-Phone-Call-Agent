@@ -3390,443 +3390,333 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
     }
 }
 
-function initializeHttpChunkedProcessing(callSid, ws) {
-    console.log('🔄 Initializing 4-second parallel HTTP chunked processing for call:', callSid);
-    
-    // Enhanced audio buffer for sentence-aware chunked processing
-    ws.audioChunks = [];
-    ws.chunkBuffer = Buffer.alloc(0);
-    ws.lastProcessTime = Date.now();
-    ws.chunkCount = 0;
-    ws.sentenceBuffer = ''; // Buffer to accumulate partial sentences
-    ws.lastTranscriptTime = Date.now();
-    ws.emailBuffer = ''; // Special buffer for accumulating email fragments
-    ws.emailMode = false; // Flag for when we're collecting email letters
-    
-    // Process any buffered audio from before HTTP chunked processing was initialized
-    if (ws.audioBuffer && ws.audioBuffer.length > 0) {
-        console.log(`🔄 Processing ${ws.audioBuffer.length} buffered audio packets from before HTTP init...`);
-        for (const mulawData of ws.audioBuffer) {
-            const linear16Data = convertMulawToLinear16(mulawData);
-            ws.chunkBuffer = Buffer.concat([ws.chunkBuffer, linear16Data]);
+// 🎯 SMART TRANSCRIPT PROCESSING: Quality-first approach with intelligent buffering
+async function processCompletedTranscriptSmart(transcript, confidence, callSid, ws, transcriptId) {
+    try {
+        let rawText = transcript.trim();
+        
+        console.log(`🎯 SMART PROCESSING: Raw transcript: "${rawText}"`);
+        
+        // Add to conversation context for awareness
+        if (!ws.conversationContext) ws.conversationContext = [];
+        ws.conversationContext.push({
+            text: rawText,
+            timestamp: Date.now(),
+            confidence: confidence,
+            transcriptId: transcriptId
+        });
+        
+        // Keep context manageable (last 10 chunks)
+        if (ws.conversationContext.length > 10) {
+            ws.conversationContext = ws.conversationContext.slice(-10);
         }
-        console.log(`📊 Transferred buffered audio: ${ws.chunkBuffer.length} bytes ready for processing`);
-        ws.audioBuffer = []; // Clear the buffer
-    }
-    
-    // 🚀 OPTIMIZED FOR 4-SECOND TRANSCRIPTION: User-requested timing for maximum word capture
-    ws.chunkProcessor = setInterval(async () => {
-        // 🎯 4-SECOND OPTIMIZATION: Tuned for user's exact requirements
-        const minAudioLength = 12000; // 1.5 seconds at 8kHz (minimum for processing)
-        const preferredAudioLength = 32000; // 4 seconds at 8kHz (user's requirement)
-        const maxWaitTime = 4000; // EXACTLY 4 seconds as requested
-        const timeSinceLastProcess = Date.now() - ws.lastProcessTime;
         
-        // Process every 4 seconds OR when we have enough audio - NO WORDS MISSED optimization
-        const shouldProcess = ws.chunkBuffer.length >= minAudioLength && 
-                            (ws.chunkBuffer.length >= preferredAudioLength || timeSinceLastProcess >= maxWaitTime);
-        
-        if (shouldProcess) {
+        // 🧠 ENHANCED OPENAI PROCESSING: Context-aware enhancement
+        let enhancedText = rawText;
+        if (openai && rawText.trim().length >= 3) {
             try {
-                console.log(`🔄 Processing audio chunk ${++ws.chunkCount} (${ws.chunkBuffer.length} bytes, ${timeSinceLastProcess}ms since last)`);
+                // Build context from conversation history
+                const recentContext = ws.conversationContext
+                    .slice(-5) // Last 5 chunks
+                    .map(c => c.text)
+                    .join(' ');
                 
-                // Analyze audio quality before processing
-                const audioAnalysis = analyzeAudioQuality(ws.chunkBuffer);
-                console.log(`🎵 AUDIO ANALYSIS: ${JSON.stringify(audioAnalysis)}`);
+                enhancedText = await enhanceTranscriptWithOpenAIContext(rawText, recentContext, callSid);
+                console.log(`🎯 SMART OPENAI: "${rawText}" → "${enhancedText}"`);
+            } catch (enhancementError) {
+                console.error('❌ Smart OpenAI enhancement failed:', enhancementError.message);
+                enhancedText = rawText; // Use original on error
+            }
+        }
+        
+        // 🎯 SMART SENTENCE BUFFERING: Wait for complete thoughts
+        ws.sentenceBuffer = (ws.sentenceBuffer || '') + ' ' + enhancedText;
+        ws.sentenceBuffer = ws.sentenceBuffer.trim();
+        
+        console.log(`🔄 SMART BUFFERING: Added "${enhancedText}" to buffer: "${ws.sentenceBuffer}"`);
+        
+        // Analyze the buffer for completion
+        const sentences = extractCompleteSentences(ws.sentenceBuffer);
+        const bufferAge = Date.now() - (ws.lastTranscriptTime || Date.now());
+        
+        // SMART DELIVERY CONDITIONS
+        const hasCompleteSentences = sentences.completeSentences.length > 0;
+        const isLongEnough = ws.sentenceBuffer.split(' ').length >= 8; // Require meaningful content
+        const isAged = bufferAge > 12000; // Maximum 12 seconds wait
+        const isEmailSpelling = ws.emailMode && bufferAge > 5000; // Email mode gets faster delivery
+        const isCompleteThought = isCompleteThought(ws.sentenceBuffer);
+        
+        const shouldDeliver = hasCompleteSentences || 
+                            (isCompleteThought && isLongEnough) ||
+                            isAged ||
+                            isEmailSpelling;
+        
+        console.log(`🎯 SMART DELIVERY CHECK: complete:${hasCompleteSentences} | long:${isLongEnough} | aged:${isAged} | email:${isEmailSpelling} | thought:${isCompleteThought} | age:${bufferAge}ms`);
+        
+        if (shouldDeliver) {
+            let finalText;
+            
+            if (hasCompleteSentences) {
+                // Deliver complete sentences and keep remainder
+                finalText = sentences.completeSentences.join(' ');
+                ws.sentenceBuffer = sentences.remainingText;
+                console.log(`📝 SMART SENTENCES: "${finalText}"`);
+                console.log(`📋 SMART REMAINING: "${ws.sentenceBuffer}"`);
+            } else {
+                // Deliver all accumulated content
+                finalText = ws.sentenceBuffer;
                 
-                // Lower silence threshold to capture more audio (no words missed)
-                if (audioAnalysis.silence_percent > 95) { // Changed from 90% to 95% to capture more
-                    console.log(`🔇 Skipping silent audio chunk (${audioAnalysis.silence_percent}% silence)`);
-                    ws.chunkBuffer = Buffer.alloc(0);
-                    ws.lastProcessTime = Date.now();
-                    return;
+                // Add intelligent punctuation
+                if (!finalText.match(/[.!?]$/)) {
+                    if (finalText.match(/\b(hello|hi|hey|goodbye|bye|thanks|thank you)\b/i)) {
+                        finalText += '.';
+                    } else if (finalText.match(/\b(what|when|where|how|why|who|which)\b/i)) {
+                        finalText += '?';
+                    } else {
+                        finalText += '.';
+                    }
                 }
                 
-                // Create proper WAV file with header
-                const wavHeader = createWavHeader(ws.chunkBuffer.length, 16000); // Use 16kHz for better quality
-                const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
+                ws.sentenceBuffer = '';
+                console.log(`⚡ SMART DELIVERY: "${finalText}" (reason: ${isAged ? 'aged' : isCompleteThought ? 'complete' : 'long'})`);
+            }
+            
+            // ENHANCED EMAIL DETECTION with conversation awareness
+            const lowerText = finalText.toLowerCase();
+            
+            // Smarter email detection based on conversation flow
+            const emailTriggers = [
+                'email', 'mail', 'gmail', 'outlook', 'yahoo', 'hotmail',
+                'my email', 'email is', 'email me', 'send email', 'contact me',
+                'reach me', 'email address', 'send me', 'write to me'
+            ];
+            
+            const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
+            
+            // Check for letter patterns that suggest email spelling
+            const letterPatterns = /\b[a-z]\s+[a-z]\s+[a-z]|\b[a-z]\.\s*[a-z]\.\s*[a-z]/i;
+            const hasLetterSpelling = letterPatterns.test(finalText);
+            
+            console.log(`🔍 SMART EMAIL CHECK: trigger:${hasEmailTrigger} | letters:${hasLetterSpelling} | mode:${ws.emailMode}`);
+            
+            // Enter email mode intelligently
+            if (!ws.emailMode && (hasEmailTrigger || hasLetterSpelling)) {
+                console.log(`📧 SMART EMAIL MODE: Activated for "${finalText}"`);
+                ws.emailMode = true;
+                ws.emailBuffer = finalText;
+                ws.emailStartTime = Date.now();
+            }
+            
+            // Process email accumulation
+            if (ws.emailMode) {
+                ws.emailBuffer += ' ' + finalText;
+                console.log(`📧 SMART EMAIL BUFFER: "${ws.emailBuffer.trim()}"`);
                 
-                console.log(`📊 WAV file created: ${wavFile.length} bytes (${wavHeader.length} header + ${ws.chunkBuffer.length} data)`);
+                // Try multiple reconstruction methods
+                let possibleEmail = null;
                 
-                // Save audio file temporarily and create public URL
-                const fs = require('fs');
-                const audioFilename = `audio_${callSid}_${ws.chunkCount}_${Date.now()}.wav`;
-                const audioPath = `/tmp/${audioFilename}`;
+                // Method 1: Standard pattern matching
+                possibleEmail = extractEmailFromTranscript(ws.emailBuffer);
                 
-                // Save WAV file temporarily
-                fs.writeFileSync(audioPath, wavFile);
-                console.log(`💾 Saved audio file: ${audioPath} (${wavFile.length} bytes)`);
-                
-                // Create public URL for AssemblyAI - optimized for Railway
-                const protocol = 'https'; // Railway uses HTTPS
-                const host = process.env.RAILWAY_STATIC_URL || 
-                           process.env.RAILWAY_PUBLIC_DOMAIN || 
-                           'real-time-phone-call-agent-production.up.railway.app';
-                const audioUrl = `${protocol}://${host}/audio/${audioFilename}`;
-                
-                console.log(`🔗 Audio URL for AssemblyAI: ${audioUrl}`);
-                
-                // Request transcription with optimized settings for sentence completion
-                const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${assemblyAIApiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        // 🚀 MAXIMUM ACCURACY: NO WORDS MISSED configuration
-                        audio_url: audioUrl,
-                        language_code: 'en', // General English for better accent support
-                        punctuate: true,
-                        format_text: true,
-                        speech_model: 'universal', // Universal model for better accent recognition
-                        
-                        // 🎯 ENHANCED WORD BOOSTING: Extended vocabulary for complete word capture
-                        word_boost: [
-                            // Core business terms
-                            'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
-                            'email', 'gmail', 'outlook', 'yahoo', 'hotmail', 'icloud',
-                            
-                            // Time references  
-                            'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
-                            'thursday', 'friday', 'saturday', 'sunday', 'time', 'pm', 'am',
-                            
-                            // Common speech patterns (accent-aware)
-                            'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
-                            'discuss', 'talk', 'speak', 'contact', 'reach', 'connect',
-                            'want', 'need', 'help', 'support', 'information', 'details',
-                            
-                            // Email components and spelled letters
-                            'at', 'dot', 'com', 'org', 'net', 'address', 'email', 'is',
-                            'my', 'and', 'the', 'to', 'for', 'with', 'on', 'in',
-                            
-                            // ENHANCED: Individual letters for email spelling (NO WORDS MISSED)
-                            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-                            'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-                            
-                            // Common email endings as spoken
-                            'gmail', 'g-mail', 'jemail', 'outlook', 'out-look', 'yahoo', 'ya-hoo',
-                            'hotmail', 'hot-mail', 'icloud', 'i-cloud', 'dot-com', 'dotcom',
-                            
-                            // ENHANCED: No words missed - common filler words and connectors
-                            'and', 'the', 'to', 'a', 'an', 'of', 'for', 'with', 'on', 'in',
-                            'at', 'by', 'from', 'up', 'about', 'into', 'over', 'after',
-                            'so', 'then', 'now', 'but', 'or', 'if', 'when', 'where', 'how',
-                            'what', 'who', 'which', 'why', 'this', 'that', 'these', 'those',
-                            
-                            // Accent-aware common words & phonetic variations
-                            'nine', 'nine-nine', 'ninety', 'nineteen', 'number', 'numbers',
-                            'inner', 'under', 'enter', 'inter', 'in', 'an', 'and',
-                            'alex', 'alax', 'alex', 'aleks', 'alexander', 'alexandra',
-                            'zero', 'oh', 'nought', 'nil', 'two', 'three', 'four', 'five',
-                            'six', 'seven', 'eight', 'nine', 'ten', 'hundred', 'thousand',
-                            
-                            // USER REQUIREMENT: Ensure transcription completeness
-                            'transcription', 'transcript', 'word', 'words', 'every', 'single',
-                            'make', 'sure', 'not', 'let', 'out', 'must', 'second', 'working'
-                        ],
-                        boost_param: 'high'
-                    })
-                });
-                
-                console.log(`📡 AssemblyAI transcription request: ${transcriptResponse.status} ${transcriptResponse.statusText}`);
-                
-                if (!transcriptResponse.ok) {
-                    const errorText = await transcriptResponse.text();
-                    console.error(`❌ Transcription request failed: ${transcriptResponse.status} - ${errorText}`);
-                    throw new Error(`Transcription request failed: ${transcriptResponse.status} ${transcriptResponse.statusText} - ${errorText}`);
+                // Method 2: Letter reconstruction
+                if (!possibleEmail) {
+                    possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
                 }
                 
-                const transcriptResult = await transcriptResponse.json();
-                const transcriptId = transcriptResult.id;
+                // Method 3: AI-powered email reconstruction
+                if (!possibleEmail && openai) {
+                    try {
+                        possibleEmail = await reconstructEmailWithAI(ws.emailBuffer, callSid);
+                    } catch (aiError) {
+                        console.log('AI email reconstruction failed:', aiError.message);
+                    }
+                }
                 
-                console.log(`🆔 AssemblyAI transcript ID: ${transcriptId}`);
-                console.log(`📊 Initial status: ${transcriptResult.status}`);
+                console.log(`🔧 SMART EMAIL RESULT: "${possibleEmail}"`);
                 
-                // 🚀 4-SECOND PARALLEL PROCESSING: Optimized for user requirements
-                console.log(`🚀 4-SECOND MODE: Starting transcript ${transcriptId} in background`);
-                
-                // Process this transcript in parallel (non-blocking)
-                (async () => {
-                    let attempts = 0;
-                    let result = null;
+                // Validate and deliver email
+                if (possibleEmail && possibleEmail.length >= 6 && possibleEmail.includes('@')) {
+                    console.log(`📧 SMART EMAIL DETECTED: "${possibleEmail}"`);
                     
-                    while (attempts < 20) { // Increased attempts for 4-second reliability
-                        await new Promise(resolve => setTimeout(resolve, 500)); // Faster polling for 4-second delivery
-                        attempts++;
+                    broadcastToClients({
+                        type: 'email_detected',
+                        message: `Email detected: ${possibleEmail}`,
+                        data: {
+                            callSid: callSid,
+                            email: possibleEmail,
+                            source_transcript: ws.emailBuffer.trim(),
+                            method: 'smart_multi_method',
+                            transcript_id: transcriptId,
+                            confidence: 'high',
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    
+                    ws.emailMode = false;
+                    ws.emailBuffer = '';
+                } else {
+                    // Check timeout for email mode
+                    const emailElapsed = Date.now() - ws.emailStartTime;
+                    if (emailElapsed > 20000) { // 20 second timeout for smart mode
+                        console.log(`📧 SMART EMAIL TIMEOUT: Final attempt after 20s`);
                         
-                        console.log(`🔄 4-SEC POLLING: attempt ${attempts}/20 for transcript ${transcriptId}`);
-                        
-                        try {
-                            const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-                                headers: {
-                                    'Authorization': `Bearer ${assemblyAIApiKey}`
+                        // Final reconstruction attempt
+                        const finalAttempt = reconstructEmailFromLetters(ws.emailBuffer, true);
+                        if (finalAttempt && finalAttempt.length >= 6) {
+                            broadcastToClients({
+                                type: 'email_detected',
+                                message: `Email detected: ${finalAttempt}`,
+                                data: {
+                                    callSid: callSid,
+                                    email: finalAttempt,
+                                    source_transcript: ws.emailBuffer.trim(),
+                                    method: 'smart_timeout_final',
+                                    transcript_id: transcriptId,
+                                    confidence: 'medium',
+                                    timestamp: new Date().toISOString()
                                 }
                             });
-                            
-                            if (statusResponse.ok) {
-                                result = await statusResponse.json();
-                                console.log(`📊 Transcript status: ${result.status}`);
-                                
-                                if (result.status === 'completed') {
-                                    console.log(`✅ 4-SECOND COMPLETED: ${transcriptId} after ${attempts} attempts (${attempts * 0.5}s)`);
-                                    
-                                    const transcript = result.text;
-                                    const confidence = result.confidence || 0.8;
-                                    
-                                    if (transcript && transcript.trim().length > 0) {
-                                        // Process the completed transcript
-                                        await processCompletedTranscript(transcript, confidence, callSid, ws, transcriptId);
-                                    }
-                                    break;
-                                } else if (result.status === 'error') {
-                                    console.error(`❌ 4-SECOND ERROR: ${transcriptId} - ${result.error}`);
-                                    break;
-                                }
-                            }
-                        } catch (pollError) {
-                            console.error(`❌ 4-SECOND POLL ERROR: ${transcriptId} - ${pollError.message}`);
-                            break;
                         }
+                        
+                        ws.emailMode = false;
+                        ws.emailBuffer = '';
                     }
-                    
-                    if (attempts >= 20) {
-                        console.log(`⏰ 4-SECOND TIMEOUT: ${transcriptId} after 20 attempts (10s) - continuing with next chunk`);
-                    }
-                })();
-                                
-                // 🚀 IMMEDIATE 4-SECOND PROCESSING: Continue immediately for no missed words
-                console.log(`⚡ 4-SECOND MODE: Chunk ${ws.chunkCount} sent to AssemblyAI, starting next 4-second chunk`);
-                
-                // 🔧 DELAYED CLEANUP: Don't delete files immediately - AssemblyAI needs time to download them
-                setTimeout(() => {
-                    try {
-                        fs.unlinkSync(audioPath);
-                        console.log(`🗑️ Delayed cleanup: ${audioFilename} (after 60s)`);
-                    } catch (cleanupError) {
-                        console.log(`⚠️ Could not cleanup file ${audioFilename}:`, cleanupError.message);
-                    }
-                }, 60000); // Wait 60 seconds before deleting files
-                
-                // Clear buffer and continue processing immediately (4-second parallel mode)
-                ws.chunkBuffer = Buffer.alloc(0);
-                ws.lastProcessTime = Date.now();
-                
-            } catch (error) {
-                console.error('❌ 4-second HTTP chunk processing error:', error.message);
-                // Clear buffer even on error to prevent accumulation
-                ws.chunkBuffer = Buffer.alloc(0);
-                ws.lastProcessTime = Date.now();
+                }
             }
-        }
-    }, 1000); // Check every 1 second for precise 4-second processing cycles
-    
-    console.log('✅ 4-SECOND PROCESSING: Optimized for user requirements (no words missed)');
-    console.log('🚀 4-SECOND GUARANTEED: Every 4 seconds with complete sentence delivery');
-    console.log('🔧 4-SECOND TIMING: Precise intervals with enhanced word boosting');
-    console.log('⚡ NO WORDS MISSED: Maximum capture with parallel processing');
-    
-    broadcastToClients({
-        type: 'http_transcription_ready',
-        message: '4-SECOND OPTIMIZED: Every 4 seconds with no words missed (User Requirements)',
-        data: {
-            callSid: callSid,
-            method: '4_second_parallel_no_words_missed',
-            interval: '4_seconds_user_optimized',
-            config: 'maximum_word_capture',
-            features: [
-                '4_second_guaranteed_delivery',
-                'no_words_missed_optimization',
-                'complete_sentence_detection',
-                'enhanced_word_boosting',
-                'parallel_processing',
-                'email_detection_enhanced',
-                'universal_speech_model',
-                'accent_friendly_processing'
-            ],
-            word_boost_count: '60+ terms including fillers',
-            timing: {
-                interval: '4_seconds_exactly',
-                polling: '0.5_second_intervals',
-                timeout: '10_seconds_max'
-            },
-            user_requirements: [
-                'every_4_seconds',
-                'no_single_word_missed',
-                'complete_sentences',
-                'email_reading_enhanced'
-            ],
-            platform: 'railway',
-            approach: '4_second_user_optimized',
-            timestamp: new Date().toISOString()
-        }
-    });
-}
-
-// ENHANCED: Intelligent sentence extraction with complete thought detection
-function extractCompleteSentences(text) {
-    if (!text || text.trim().length === 0) {
-        return { completeSentences: [], remainingText: '' };
-    }
-    
-    // Split by sentence endings, but keep the punctuation
-    const sentencePattern = /([.!?]+)\s*/g;
-    const parts = text.split(sentencePattern);
-    
-    const completeSentences = [];
-    let remainingText = '';
-    
-    for (let i = 0; i < parts.length; i += 2) {
-        const sentencePart = parts[i];
-        const punctuation = parts[i + 1];
-        
-        if (punctuation && punctuation.match(/[.!?]/)) {
-            // Complete sentence with punctuation
-            completeSentences.push((sentencePart + punctuation).trim());
-        } else {
-            // Check if this looks like a complete thought even without punctuation
-            const potentialSentence = sentencePart ? sentencePart.trim() : '';
             
-            if (potentialSentence && isCompleteThought(potentialSentence)) {
-                // Add period and treat as complete sentence
-                completeSentences.push(potentialSentence + '.');
-            } else {
-                // Incomplete sentence or remaining text
-                remainingText = potentialSentence;
-            }
+            // Broadcast the final transcript
+            broadcastToClients({
+                type: 'live_transcript',
+                message: finalText,
+                data: {
+                    callSid: callSid,
+                    text: finalText,
+                    originalText: rawText !== finalText ? rawText : undefined,
+                    confidence: confidence,
+                    is_final: true,
+                    provider: 'assemblyai_smart',
+                    transcript_id: transcriptId,
+                    processing_mode: hasCompleteSentences ? 'complete_sentences' : 
+                                   isCompleteThought ? 'complete_thought' : 
+                                   isAged ? 'timeout_delivery' : 'content_ready',
+                    buffer_age_ms: bufferAge,
+                    word_count: finalText.split(' ').length,
+                    enhanced_with_openai: openai ? true : false,
+                    conversation_context_size: ws.conversationContext.length,
+                    timestamp: new Date().toISOString()
+                }
+            });
+            
+            // Process for intent detection and AI analysis
+            Promise.allSettled([
+                detectAndProcessIntent(finalText, callSid),
+                analyzeTranscriptWithAI(finalText, callSid)
+            ]).then(results => {
+                console.log(`✅ Smart parallel processing completed for ${transcriptId}`);
+            }).catch(error => {
+                console.error(`❌ Smart parallel processing error for ${transcriptId}:`, error);
+            });
+            
+            ws.lastTranscriptTime = Date.now();
+        } else {
+            console.log(`📝 SMART ACCUMULATING: "${enhancedText}" added (${ws.sentenceBuffer.split(' ').length} words, ${bufferAge}ms age)`);
         }
+    } catch (error) {
+        console.error(`❌ Error in smart transcript processing ${transcriptId}:`, error);
     }
-    
-    // Handle edge cases where text doesn't end with punctuation
-    if (remainingText.length === 0 && parts.length > 0) {
-        const lastPart = parts[parts.length - 1];
-        if (lastPart && !lastPart.match(/[.!?]$/)) {
-            const trimmedPart = lastPart.trim();
-            if (isCompleteThought(trimmedPart)) {
-                completeSentences.push(trimmedPart + '.');
-            } else {
-                remainingText = trimmedPart;
-            }
-        }
-    }
-    
-    return {
-        completeSentences: completeSentences.filter(s => s.length > 0),
-        remainingText: remainingText.trim()
-    };
 }
 
-// Helper function to detect if text represents a complete thought
-function isCompleteThought(text) {
-    if (!text || text.length < 5) return false; // Lowered threshold for 4-second intervals
+// 🧠 CONTEXT-AWARE OPENAI ENHANCEMENT
+async function enhanceTranscriptWithOpenAIContext(rawText, context, callSid) {
+    if (!openai) return rawText;
     
-    const words = text.toLowerCase().split(/\s+/);
-    if (words.length < 2) return false; // Lowered threshold for 4-second processing
-    
-    // 🎯 ENHANCED FOR 4-SECOND INTERVALS: More aggressive complete thought detection
-    const completeThoughtPatterns = [
-        // Meeting and scheduling (primary use case)
-        /\b(i want to|i need to|i would like to|let's|we should|can we|could we|shall we)\b/i,
-        /\b(schedule|arrange|set up|plan|organize|book)\b.*\b(meeting|call|appointment|session)\b/i,
-        /\b(my email is|my email address is|email me at|contact me at|reach me at)\b/i,
-        /\b(call me|phone me|reach me|contact me)\b.*\b(at|on|via)\b/i,
+    try {
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+                {
+                    role: 'system',
+                    content: `You are a professional transcript enhancer specializing in fixing speech-to-text errors. 
+
+CONTEXT: You're processing a phone call transcript. Use the conversation context to better understand what the speaker is saying.
+
+CRITICAL RULES:
+1. Fix obvious speech-to-text errors and typos
+2. Improve punctuation and capitalization
+3. Preserve the original meaning and intent
+4. Don't add content that wasn't spoken
+5. Pay special attention to email addresses being spelled out
+6. Use context to disambiguate unclear words
+7. Keep the same conversational tone
+8. If someone is spelling an email, reconstruct it properly
+
+CONTEXT FROM CONVERSATION: "${context}"
+
+Return ONLY the corrected text, nothing else.`
+                },
+                {
+                    role: 'user',
+                    content: rawText
+                }
+            ],
+            temperature: 0.1,
+            max_tokens: 200
+        });
         
-        // 4-SECOND OPTIMIZATION: Shorter complete statements
-        /\b(this is|that is|it is|there is|there are|here is|here are)\b/i,
-        /\b(i am|i'm|we are|we're|you are|you're|he is|she is|it's)\b/i,
-        /\b(i have|i've|we have|we've|you have|you've|he has|she has)\b/i,
-        /\b(i will|i'll|we will|we'll|you will|you'll|he will|she will)\b/i,
-        /\b(i can|i could|we can|we could|you can|you could|he can|she can)\b/i,
-        /\b(i do|i did|we do|we did|you do|you did|he does|she does)\b/i,
-        /\b(i want|i need|we want|we need|you want|you need)\b/i,
-        /\b(i think|i believe|we think|we believe|you think|you believe)\b/i,
-        /\b(i know|i understand|we know|we understand|you know|you understand)\b/i,
-        
-        // Questions (often complete thoughts in 4 seconds)
-        /\b(what|when|where|why|how|who|which)\b.*\b(is|are|was|were|do|does|did|can|could|will|would)\b/i,
-        /\b(do you|did you|will you|would you|can you|could you|should you)\b/i,
-        /\b(is there|are there|was there|were there|will there|would there)\b/i,
-        /\b(what's|what is|where's|where is|when's|when is|how's|how is)\b/i,
-        
-        // Business context (short phrases)
-        /\b(regarding|about|concerning|for)\b.*\b(project|meeting|proposal|contract|business|work)\b/i,
-        /\b(thank you|thanks|please|sorry|excuse me|hello|hi|goodbye|bye)\b/i,
-        
-        // 4-SECOND SPECIFIC: Common sentence starters that indicate completeness
-        /\b(yes|no|okay|alright|sure|definitely|absolutely|certainly|exactly|right)\b/i,
-        /\b(first|second|third|next|then|now|later|after|before|during)\b/i,
-        /\b(also|and|but|or|so|because|since|although|however|therefore)\b/i,
-        
-        // Email and contact information (always complete)
-        /\b(my|the|this|that)\b.*\b(email|phone|number|address|contact)\b/i,
-        /@|at gmail|at outlook|dot com|phone number|contact details/i,
-        
-        // USER'S SPECIFIC REQUIREMENTS
-        /\b(transcription|transcript|word|words|every|single|make sure|not|let out|must|second|working)\b/i
-    ];
-    
-    // Check if any pattern matches
-    const hasCompletePattern = completeThoughtPatterns.some(pattern => pattern.test(text));
-    
-    // 4-SECOND OPTIMIZATION: Enhanced subject-verb detection
-    const subjectVerbPatterns = [
-        /\b(i|we|you|he|she|it|they|this|that|there|here)\b.*\b(am|is|are|was|were|have|has|had|will|would|can|could|should|do|does|did|say|said|want|need|like|think|know|see|get|go|come|make|take|give|tell|ask|help|work|call|email|send|receive|schedule|arrange|plan|organize|meet|discuss|talk|speak)\b/i,
-        /\b(am|is|are|was|were|have|has|had|will|would|can|could|should|do|does|did)\b.*\b(you|he|she|it|they|we|this|that|there|here)\b/i
-    ];
-    
-    const hasSubjectVerb = subjectVerbPatterns.some(pattern => pattern.test(text));
-    
-    // Business-specific complete thoughts (4-second friendly)
-    const businessContextPatterns = [
-        /\b(meeting|email|phone|call|schedule|appointment|project|work|business|service|support|help|information|details|price|cost|quote|contact|discuss|talk|speak|arrange|plan|organize)\b/i,
-        /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|next week|this week|am|pm)\b/i
-    ];
-    
-    const hasBusinessContext = businessContextPatterns.some(pattern => pattern.test(text));
-    
-    // Email patterns (always complete)
-    const hasEmail = /@|at gmail|at outlook|dot com|email is|email address|my email|contact me|reach me/i.test(text);
-    
-    // 4-SECOND SPECIFIC: Greeting and closing patterns
-    const conversationalPatterns = [
-        /\b(hello|hi|hey|good morning|good afternoon|good evening|goodbye|bye|see you|talk soon|take care)\b/i,
-        /\b(thank you|thanks|please|sorry|excuse me|pardon me|appreciate|grateful)\b/i
-    ];
-    
-    const hasConversational = conversationalPatterns.some(pattern => pattern.test(text));
-    
-    // Negation or continuation indicators (might be incomplete)
-    const continuationIndicators = /\b(and|but|or|so|then|because|since|although|however|therefore|also|plus|moreover|furthermore|additionally)\s*$|,\s*$/i;
-    const hasContinuation = continuationIndicators.test(text.trim());
-    
-    // 4-SECOND DECISION LOGIC: More aggressive completion for user requirements
-    const reasonsForCompletion = [];
-    
-    if (hasCompletePattern) reasonsForCompletion.push('complete_pattern');
-    if (hasSubjectVerb) reasonsForCompletion.push('subject_verb');
-    if (hasBusinessContext) reasonsForCompletion.push('business_context');
-    if (hasEmail) reasonsForCompletion.push('email_pattern');
-    if (hasConversational) reasonsForCompletion.push('conversational');
-    if (words.length >= 6) reasonsForCompletion.push('sufficient_length');
-    if (text.includes('?')) reasonsForCompletion.push('question');
-    if (text.includes('!')) reasonsForCompletion.push('exclamation');
-    
-    // 4-SECOND OPTIMIZATION: Consider complete if we have multiple indicators
-    const isComplete = reasonsForCompletion.length >= 2 || 
-                      hasCompletePattern || 
-                      hasEmail || 
-                      (hasSubjectVerb && hasBusinessContext) ||
-                      (hasConversational && words.length >= 3) ||
-                      (words.length >= 8 && !hasContinuation);
-    
-    // Debug logging for 4-second optimization
-    if (isComplete) {
-        console.log(`✅ 4-SEC COMPLETE THOUGHT: "${text}" (reasons: ${reasonsForCompletion.join(', ')})`);
-    } else {
-        console.log(`⏳ 4-SEC INCOMPLETE: "${text}" (reasons: ${reasonsForCompletion.join(', ')}, continuation: ${hasContinuation})`);
+        const enhanced = response.choices[0]?.message?.content?.trim();
+        return enhanced || rawText;
+    } catch (error) {
+        console.error('Context-aware OpenAI enhancement failed:', error.message);
+        return rawText;
     }
+}
+
+// 🤖 AI-POWERED EMAIL RECONSTRUCTION
+async function reconstructEmailWithAI(transcriptBuffer, callSid) {
+    if (!openai) return null;
     
-    return isComplete;
+    try {
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+                {
+                    role: 'system',
+                    content: `You are an expert at reconstructing email addresses from phone call transcripts where someone is spelling out their email.
+
+TASK: Extract and reconstruct the email address from the transcript.
+
+RULES:
+1. Look for patterns where someone is spelling out an email letter by letter
+2. Common speech-to-text errors: "and" = "a", "axe" = "x", "see" = "c", "are" = "r", "tea" = "t", "you" = "u", "oh" = "o", "two" = "2", "to" = "2"
+3. Email domains: gmail, outlook, yahoo, hotmail, icloud
+4. Return ONLY the email address if found, or "NOT_FOUND" if no email can be reconstructed
+5. The email must be valid format: username@domain.com
+
+EXAMPLES:
+- "my email is and l a x e n d e r at gmail dot com" → "alexander@gmail.com"
+- "a l e x two zero zero two at gmail dot com" → "alex2002@gmail.com"`
+                },
+                {
+                    role: 'user',
+                    content: transcriptBuffer
+                }
+            ],
+            temperature: 0.1,
+            max_tokens: 50
+        });
+        
+        const result = response.choices[0]?.message?.content?.trim();
+        
+        if (result && result !== 'NOT_FOUND' && result.includes('@') && result.includes('.')) {
+            console.log(`🤖 AI EMAIL RECONSTRUCTION: "${result}" from "${transcriptBuffer}"`);
+            return result;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error('AI email reconstruction failed:', error.message);
+        return null;
+    }
 }
 
 // AssemblyAI real-time transcription initialization
