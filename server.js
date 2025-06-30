@@ -872,6 +872,106 @@ function broadcastToClients(message) {
 
 // Old duplicate webhook handler removed - using handleVoiceWebhook function instead
 
+// Enhance transcript precision with OpenAI
+async function enhanceTranscriptWithOpenAI(rawTranscript, callSid) {
+    if (!openai) {
+        console.log('⏭️ Skipping transcript enhancement - OpenAI not configured');
+        return rawTranscript;
+    }
+    
+    // Skip enhancement for very short transcripts
+    if (rawTranscript.trim().length < 10) {
+        return rawTranscript;
+    }
+    
+    try {
+        console.log(`🧠 ENHANCING transcript with OpenAI: "${rawTranscript}"`);
+        
+        const enhancementResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                {
+                    role: "system",
+                    content: `You are a professional transcript enhancement AI. Your job is to clean up speech-to-text transcripts by:
+
+1. FIXING COMMON SPEECH-TO-TEXT ERRORS:
+   - "And" → "alax" (for names like "Alex")
+   - "Axe c" → "en" 
+   - "N d e" → "der"
+   - "Ps 2" → "ps2"
+   - Phone number fragments
+   - Email spelling errors
+
+2. IMPROVING PUNCTUATION & CAPITALIZATION:
+   - Add proper punctuation
+   - Capitalize proper nouns
+   - Fix sentence structure
+
+3. PRESERVING CONTENT:
+   - Keep ALL original words
+   - Don't add new information
+   - Don't change meaning
+   - Maintain email addresses exactly
+
+4. BUSINESS CONTEXT AWARENESS:
+   - Meeting scheduling language
+   - Email addresses 
+   - Phone numbers
+   - Time references (3pm, Friday, etc.)
+
+RULES:
+- Return ONLY the enhanced transcript
+- No explanations or commentary
+- Keep it natural and professional
+- If email spelling detected, preserve letter sequences carefully
+
+Example:
+Input: "Hello. M alex. I would like to arrange a meeting. Friday. P. M. If. Send an email. Be my. Email is. And. Axe c. N d e. Ps 2. 002. At gmail com."
+Output: "Hello. I'm Alex. I would like to arrange a meeting Friday 3 PM if you're free. Send an email - my email is alaxenderps2002@gmail.com."`
+                },
+                {
+                    role: "user",
+                    content: `Raw transcript: "${rawTranscript}"`
+                }
+            ],
+            temperature: 0.1,
+            max_tokens: 500
+        });
+        
+        const enhancedTranscript = enhancementResponse.choices[0].message.content.trim();
+        
+        // Basic validation - ensure enhanced version isn't too different
+        const originalWords = rawTranscript.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+        const enhancedWords = enhancedTranscript.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+        
+        // If enhanced version is dramatically different, use original
+        if (enhancedWords.length > originalWords.length * 2 || enhancedWords.length < originalWords.length * 0.5) {
+            console.log(`⚠️ ENHANCEMENT VALIDATION FAILED: Too different from original, using raw transcript`);
+            return rawTranscript;
+        }
+        
+        console.log(`✅ ENHANCED TRANSCRIPT: "${rawTranscript}" → "${enhancedTranscript}"`);
+        
+        // Broadcast enhancement notification
+        broadcastToClients({
+            type: 'transcript_enhanced',
+            message: 'Transcript enhanced with OpenAI',
+            data: {
+                callSid: callSid,
+                originalTranscript: rawTranscript,
+                enhancedTranscript: enhancedTranscript,
+                timestamp: new Date().toISOString()
+            }
+        });
+        
+        return enhancedTranscript;
+        
+    } catch (error) {
+        console.error('❌ OpenAI transcript enhancement failed:', error.message);
+        return rawTranscript; // Fallback to original
+    }
+}
+
 // Analyze transcript with OpenAI
 async function analyzeTranscriptWithAI(text, callSid) {
     if (!openai) {
@@ -3102,26 +3202,40 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 console.log(`⚡ 4-SECOND DELIVERY: "${finalText}" (age: ${bufferAge}ms)`);
             }
             
-            // Broadcast the accumulated text
+            // 🧠 ENHANCE WITH OPENAI: Improve precision and fix speech-to-text errors
+            let enhancedText = finalText;
+            if (openai && finalText.trim().length >= 10) {
+                try {
+                    enhancedText = await enhanceTranscriptWithOpenAI(finalText, callSid);
+                    console.log(`🎯 OPENAI ENHANCED: "${finalText}" → "${enhancedText}"`);
+                } catch (enhancementError) {
+                    console.error('❌ OpenAI enhancement failed:', enhancementError.message);
+                    enhancedText = finalText; // Use original on error
+                }
+            }
+            
+            // Broadcast the enhanced text
             broadcastToClients({
                 type: 'live_transcript',
-                message: finalText,
+                message: enhancedText,
                 data: {
                     callSid: callSid,
-                    text: finalText,
+                    text: enhancedText,
+                    originalText: finalText !== enhancedText ? finalText : undefined,
                     confidence: confidence,
                     is_final: true,
                     provider: 'assemblyai_http_parallel',
                     transcript_id: transcriptId,
                     processing_mode: forceDelivery ? '4_second_forced' : 'content_ready',
                     buffer_age_ms: bufferAge,
-                    word_count: finalText.split(' ').length,
+                    word_count: enhancedText.split(' ').length,
+                    enhanced_with_openai: openai ? true : false,
                     timestamp: new Date().toISOString()
                 }
             });
             
-            // 🎯 ENHANCED EMAIL DETECTION: Still try to detect emails from all content
-            const lowerText = finalText.toLowerCase();
+            // 🎯 ENHANCED EMAIL DETECTION: Use OpenAI-enhanced text for better email detection
+            const lowerText = enhancedText.toLowerCase();
             
             // Very aggressive email triggers - catch any hint of email
             const emailTriggers = [
@@ -3139,15 +3253,15 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
             
             // Start email mode aggressively on any email hint
             if (!ws.emailMode && hasEmailTrigger) {
-                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
+                console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${enhancedText}"`);
                 ws.emailMode = true;
-                ws.emailBuffer = finalText;
+                ws.emailBuffer = enhancedText;
                 ws.emailStartTime = Date.now();
             }
             
             // If in email mode, accumulate all content for email reconstruction
             if (ws.emailMode) {
-                ws.emailBuffer += ' ' + finalText;
+                ws.emailBuffer += ' ' + enhancedText;
                 console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                 
                 // Try email reconstruction continuously
@@ -3237,10 +3351,10 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     }
                 }
             } else {
-                // Standard email detection for non-email mode
-                const possibleEmail = extractEmailFromTranscript(finalText);
+                // Standard email detection for non-email mode (use enhanced text)
+                const possibleEmail = extractEmailFromTranscript(enhancedText);
                 if (possibleEmail && possibleEmail.length >= 6) {
-                    console.log(`📧 STANDARD EMAIL DETECTED: "${possibleEmail}" from: "${finalText}"`);
+                    console.log(`📧 STANDARD EMAIL DETECTED: "${possibleEmail}" from enhanced: "${enhancedText}"`);
                     
                     broadcastToClients({
                         type: 'email_detected',
@@ -3248,8 +3362,8 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                         data: {
                             callSid: callSid,
                             email: possibleEmail,
-                            source_transcript: finalText,
-                            method: 'standard_detection',
+                            source_transcript: enhancedText,
+                            method: 'standard_detection_enhanced',
                             transcript_id: transcriptId,
                             timestamp: new Date().toISOString()
                         }
@@ -3257,10 +3371,10 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 }
             }
             
-            // Process for intent detection and AI analysis in parallel
+            // Process for intent detection and AI analysis in parallel (use enhanced text)
             Promise.allSettled([
-                detectAndProcessIntent(finalText, callSid),
-                analyzeTranscriptWithAI(finalText, callSid)
+                detectAndProcessIntent(enhancedText, callSid),
+                analyzeTranscriptWithAI(enhancedText, callSid)
             ]).then(results => {
                 console.log(`✅ Parallel processing completed for ${transcriptId}`);
             }).catch(error => {
