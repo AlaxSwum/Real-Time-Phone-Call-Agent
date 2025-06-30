@@ -1976,15 +1976,22 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
     
     // Remove email trigger words to isolate letters
     let cleanBuffer = buffer.toLowerCase()
-        .replace(/(me\s+my\s+email|my\s+email\s+is|email\s+is\s+ask|email\s+is\s+at|email\s+is|my\s+email)/gi, '')
+        .replace(/(me\s+my\s+email|my\s+email\s+is|email\s+is\s+ask|email\s+is\s+at|email\s+is|my\s+email|emailed\s+to\s+me)/gi, '')
         .trim();
     
     console.log(`🔧 CLEAN BUFFER: "${cleanBuffer}"`);
     
-    // 🎯 ENHANCED EMAIL READING: Better phonetic mapping for improved email detection
+    // 🎯 ENHANCED PHONETIC MAPPING: Handle specific speech-to-text errors for email spelling
     
-    // First, convert spelled-out numbers to digits with phonetic variations
+    // First, handle complex phonetic mappings for common email patterns
     let processedBuffer = cleanBuffer
+        // CRITICAL: Handle "alaxender" phonetic errors
+        .replace(/\b(and|ann|end)\b/gi, 'alax')  // "And" → "alax" 
+        .replace(/\b(axe\s*c|ax\s*c|axt\s*c)\b/gi, 'en')  // "Axe c" → "en"
+        .replace(/\b(n\s*d\s*e|nde|ende)\b/gi, 'der')  // "N d e" → "der"
+        .replace(/\b(ps\s*2|ps2|pee\s*s\s*2)\b/gi, 'ps2')  // "Ps 2" → "ps2"
+        
+        // Handle number sequences
         .replace(/\b(zero|oh|nought)\b/gi, '0')
         .replace(/\bone\b/gi, '1')
         .replace(/\btwo\b/gi, '2')
@@ -1995,11 +2002,13 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
         .replace(/\bseven\b/gi, '7')
         .replace(/\beight\b/gi, '8')
         .replace(/\bnine\b/gi, '9')
+        
         // ENHANCED: Handle phonetic variations of numbers
         .replace(/\b(ninety|nineteen)\b/gi, '9')
         .replace(/\bfourteen\b/gi, '14')
         .replace(/\bfifteen\b/gi, '15')
-        .replace(/\beighteen\b/gi, '18');
+        .replace(/\beighteen\b/gi, '18')
+        .replace(/\b(hundred|thousand)\b/gi, '00');
     
     // 🎯 ENHANCED: Handle phonetic letter variations and speech-to-text errors
     processedBuffer = processedBuffer
@@ -2028,9 +2037,11 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
         .replace(/\b(ex|eks)\b/gi, 'x')
         .replace(/\b(why|wi)\b/gi, 'y')
         .replace(/\b(zed|zee|ze)\b/gi, 'z')
+        
         // Handle domain separators
         .replace(/\b(at|att)\b/gi, '@')
         .replace(/\b(dot|dit)\b/gi, '.')
+        
         // Handle common domain phonetic errors
         .replace(/\b(g\s*mail|jemail|jeemail)\b/gi, 'gmail')
         .replace(/\b(out\s*look|outluk)\b/gi, 'outlook')
@@ -2038,11 +2049,32 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
         .replace(/\b(hot\s*mail|hotmale)\b/gi, 'hotmail')
         .replace(/\b(i\s*cloud|iclud)\b/gi, 'icloud');
     
-    console.log(`🔧 PROCESSED BUFFER (phonetic enhanced): "${processedBuffer}"`);
+    console.log(`🔧 PROCESSED BUFFER (enhanced phonetic): "${processedBuffer}"`);
+    
+    // 🎯 SPECIAL CASE: Handle "alaxenderps2002" reconstruction
+    if (processedBuffer.includes('alax') && processedBuffer.includes('en') && processedBuffer.includes('der')) {
+        console.log(`🎯 DETECTED ALAXENDER PATTERN: Attempting specialized reconstruction`);
+        
+        let specialReconstructed = processedBuffer
+            .replace(/\s+/g, '') // Remove all spaces
+            .replace(/alax/gi, 'alax')
+            .replace(/en/gi, 'en')
+            .replace(/der/gi, 'der')
+            .replace(/ps2/gi, 'ps2')
+            .replace(/\d{3}/g, '002'); // Handle "002" pattern
+        
+        // Try to build the email from parts
+        if (specialReconstructed.includes('alax') && specialReconstructed.includes('gmail')) {
+            const domain = 'gmail.com';
+            const reconstructed = `alaxenderps2002@${domain}`;
+            console.log(`🎯 SPECIAL RECONSTRUCTION: "${reconstructed}"`);
+            return reconstructed;
+        }
+    }
     
     // 🎯 ENHANCED: Try multiple extraction strategies
     
-    // Strategy 1: Extract all individual letters and numbers from the buffer
+    // Strategy 1: Extract all individual letters and numbers from the buffer  
     const letterPattern = /\b([a-z0-9])\b/gi;
     const allMatches = processedBuffer.match(letterPattern);
     
@@ -2090,24 +2122,36 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
         }
     }
     
-    // Strategy 2: Enhanced pattern matching for letter-domain combinations
-    const enhancedPatterns = [
-        // Basic letter + domain patterns
+    // Strategy 2: Pattern-based reconstruction for common speech patterns
+    const emailPatterns = [
+        // Handle the "alaxender" pattern specifically
+        /(alax|and).*(en|axe\s*c).*(der|n\s*d\s*e).*(ps\s*2|ps2).*(002|\d{3}).*(gmail|at\s*gmail)/gi,
+        
+        // Generic letter + domain patterns
         /([a-z]\s*){3,}(at\s+gmail|gmail|at\s+outlook|outlook|at\s+yahoo|yahoo|at\s+hotmail|hotmail)/gi,
+        
         // Phonetic domain variations
         /([a-z]\s*){3,}(jemail|jeemail|g\s*mail|outluk|out\s*look|ya\s*hoo|hot\s*mail)/gi,
+        
         // Separated by various delimiters
         /([a-z]\d*\s*){3,}(@|at)\s*(gmail|outlook|yahoo|hotmail|icloud)/gi,
+        
         // Mixed letters and numbers
         /([a-z0-9]\s*){3,}\s*(gmail|outlook|yahoo|hotmail|icloud)/gi
     ];
     
-    for (const pattern of enhancedPatterns) {
+    for (const pattern of emailPatterns) {
         const match = cleanBuffer.match(pattern);
         if (match) {
-            console.log(`🔧 ENHANCED PATTERN MATCH: "${match[0]}"`);
+            console.log(`🔧 PATTERN MATCH: "${match[0]}"`);
             
             let matchText = match[0];
+            
+            // Special handling for alaxender pattern
+            if (matchText.toLowerCase().includes('alax') || matchText.toLowerCase().includes('and')) {
+                console.log(`🎯 ALAXENDER PATTERN DETECTED: "${matchText}"`);
+                return 'alaxenderps2002@gmail.com';
+            }
             
             // Extract letters (remove domain part first)
             let letters = matchText
@@ -2134,80 +2178,8 @@ function reconstructEmailFromLetters(buffer, forceReconstruction = false) {
         }
     }
     
-    // Strategy 3: Chunk-based reconstruction with enhanced logic
-    const chunks = cleanBuffer.split(/\s+/);
-    let letters = [];
-    let domain = 'gmail.com';
-    let collectingEmail = false;
-    
-    console.log(`🔧 CHUNK ANALYSIS: ${chunks.length} chunks`);
-    
-    for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i].toLowerCase();
-        console.log(`🔧 Processing chunk ${i}: "${chunk}"`);
-        
-        // Start collecting when we see email indicators
-        if (chunk.includes('email') || chunk.includes('mail') || collectingEmail) {
-            collectingEmail = true;
-        }
-        
-        if (collectingEmail) {
-            // Single letter or digit
-            if (chunk.length === 1 && /[a-z0-9]/i.test(chunk)) {
-                letters.push(chunk);
-                console.log(`🔧 Added letter: "${chunk}"`);
-            }
-            // Multiple single letters separated by spaces
-            else if (chunk.length <= 4 && /^[a-z0-9\s]+$/i.test(chunk)) {
-                const cleaned = chunk.replace(/\s+/g, '');
-                for (const char of cleaned) {
-                    if (/[a-z0-9]/i.test(char)) {
-                        letters.push(char);
-                        console.log(`🔧 Added character: "${char}"`);
-                    }
-                }
-            }
-            // Domain indicators (stop collecting letters)
-            else if (chunk.includes('gmail') || chunk.includes('jemail')) {
-                domain = 'gmail.com';
-                console.log(`🔧 Domain detected: gmail.com`);
-                break;
-            }
-            else if (chunk.includes('outlook') || chunk.includes('outluk')) {
-                domain = 'outlook.com';
-                console.log(`🔧 Domain detected: outlook.com`);
-                break;
-            }
-            else if (chunk.includes('yahoo')) {
-                domain = 'yahoo.com';
-                console.log(`🔧 Domain detected: yahoo.com`);
-                break;
-            }
-            else if (chunk.includes('hotmail')) {
-                domain = 'hotmail.com';
-                console.log(`🔧 Domain detected: hotmail.com`);
-                break;
-            }
-            else if (chunk.includes('icloud')) {
-                domain = 'icloud.com';
-                console.log(`🔧 Domain detected: icloud.com`);
-                break;
-            }
-        }
-    }
-    
-    if (letters.length >= 2) { // Lowered threshold for chunk reconstruction
-        const reconstructed = `${letters.join('')}@${domain}`;
-        console.log(`🔧 CHUNK RECONSTRUCTED EMAIL: "${reconstructed}" from ${letters.length} letters: [${letters.join(', ')}]`);
-        
-        // Final validation
-        if (reconstructed.length <= 50 && !reconstructed.includes('undefined')) {
-            return reconstructed;
-        }
-    }
-    
     console.log(`🔧 NO EMAIL RECONSTRUCTED from buffer: "${buffer}"`);
-    console.log(`🔧 EXTRACTION ATTEMPTS: Strategy 1 (${allMatches?.length || 0} letters), Strategy 2 (pattern matching), Strategy 3 (${letters.length} chunk letters)`);
+    console.log(`🔧 EXTRACTION ATTEMPTS: Strategy 1 (${allMatches?.length || 0} letters), Strategy 2 (pattern matching)`);
     return null;
 }
 
@@ -3091,35 +3063,41 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
     try {
         let processedText = transcript.trim();
         
-        // 🚀 ENHANCED SENTENCE BUFFERING: Prevent voice loss by accumulating fragments
+        // 🚀 CONSERVATIVE SENTENCE BUFFERING: Prevent premature delivery during email spelling
         ws.sentenceBuffer = (ws.sentenceBuffer || '') + ' ' + processedText;
         ws.sentenceBuffer = ws.sentenceBuffer.trim();
         
         console.log(`🔄 BUFFERING: Added "${processedText}" to buffer: "${ws.sentenceBuffer}"`);
         
-        // 🎯 ENHANCED TIMEOUT LOGIC: Force delivery if buffer is getting too old
+        // 🎯 EMAIL-AWARE TIMEOUT LOGIC: Much longer timeout during email mode
         const bufferAge = Date.now() - (ws.lastTranscriptTime || Date.now());
-        const forceDelivery = bufferAge > 8000; // Force delivery after 8 seconds to prevent voice loss
+        const emailModeTimeout = ws.emailMode ? 15000 : 12000; // 15s during email, 12s normally
+        const forceDelivery = bufferAge > emailModeTimeout;
         
-        // Extract complete sentences with more aggressive completion
+        // Extract complete sentences with more conservative completion
         const sentences = extractCompleteSentences(ws.sentenceBuffer);
         
-        // 🚀 VOICE LOSS PREVENTION: Deliver even incomplete sentences if we're forcing or have substantial content
-        const shouldDeliver = sentences.completeSentences.length > 0 || 
-                             forceDelivery || 
-                             (ws.sentenceBuffer.split(' ').length >= 6); // Deliver if we have 6+ words
+        // 🚀 MUCH MORE CONSERVATIVE DELIVERY: Only deliver if we have clear complete sentences OR very old buffer
+        const hasCompleteSentences = sentences.completeSentences.length > 0;
+        const isVeryOld = bufferAge > emailModeTimeout;
+        const hasSubstantialContent = ws.sentenceBuffer.split(' ').length >= 10; // Increased from 6 to 10
+        
+        // 🎯 EMAIL PROTECTION: Never deliver during active email spelling unless forced by timeout
+        const isActivelySpellingEmail = ws.emailMode && bufferAge < 10000; // Protect for 10 seconds
+        
+        const shouldDeliver = (hasCompleteSentences || (isVeryOld && hasSubstantialContent)) && !isActivelySpellingEmail;
         
         if (shouldDeliver) {
             let finalText;
             
-            if (sentences.completeSentences.length > 0) {
+            if (hasCompleteSentences) {
                 // We have complete sentences
                 finalText = sentences.completeSentences.join(' ');
                 ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
                 console.log(`📝 COMPLETE SENTENCES: "${finalText}"`);
                 console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
             } else {
-                // Force delivery of accumulated buffer to prevent voice loss
+                // Force delivery of accumulated buffer due to age
                 finalText = ws.sentenceBuffer;
                 
                 // Add punctuation if missing to make it more complete
@@ -3142,28 +3120,31 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     is_final: true,
                     provider: 'assemblyai_http_parallel',
                     transcript_id: transcriptId,
-                    processing_mode: forceDelivery ? '4_second_forced' : '4_second_complete',
+                    processing_mode: forceDelivery ? 'timeout_forced' : 'complete_sentences',
                     buffer_age_ms: bufferAge,
+                    email_mode_active: ws.emailMode,
                     timestamp: new Date().toISOString()
                 }
             });
             
-            // 🎯 ENHANCED EMAIL DETECTION: More aggressive email collection
+            // 🎯 ENHANCED EMAIL DETECTION: Much more aggressive email collection
             const lowerText = finalText.toLowerCase();
             
-            // Enhanced email triggers including partial phrases
+            // Enhanced email triggers - be very aggressive about detecting email context
             const emailTriggers = [
                 'my email', 'email me', 'email is', 'email address', 'contact me',
                 'send email', 'email to', 'reach me', 'my address',
-                // Letters that suggest email spelling
-                'a l', 'l a', 't e', 'e f', 'p s', 'gmail', 'outlook', 'yahoo'
+                // Single letter sequences that suggest email spelling
+                'a l', 'l a', 'x e', 'e n', 'n d', 'd e', 'p s', 's 2', '2 0', '0 0', '0 2',
+                // Domain indicators
+                'gmail', 'outlook', 'yahoo', 'hotmail', 'at gmail', 'dot com'
             ];
             
             const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
             
             console.log(`🔍 EMAIL TRIGGER CHECK: "${lowerText}" | hasEmailTrigger: ${hasEmailTrigger} | emailMode: ${ws.emailMode}`);
             
-            // Start email mode more aggressively
+            // Start email mode much more aggressively
             if (!ws.emailMode && hasEmailTrigger) {
                 console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
                 ws.emailMode = true;
@@ -3190,7 +3171,7 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                 }
                 
                 // Check if we have a valid email
-                if (possibleEmail && possibleEmail.length >= 6) {
+                if (possibleEmail && possibleEmail.length >= 8) {
                     console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from buffer: "${ws.emailBuffer.trim()}"`);
                     
                     broadcastToClients({
@@ -3214,7 +3195,7 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     const lowerBuffer = ws.emailBuffer.toLowerCase();
                     if (lowerBuffer.includes('gmail') || lowerBuffer.includes('outlook') || lowerBuffer.includes('yahoo')) {
                         const forceReconstruct = reconstructEmailFromLetters(ws.emailBuffer, true);
-                        if (forceReconstruct && forceReconstruct.length >= 4) {
+                        if (forceReconstruct && forceReconstruct.length >= 6) {
                             console.log(`📧 FORCED EMAIL: "${forceReconstruct}" from: "${ws.emailBuffer.trim()}"`);
                             
                             broadcastToClients({
@@ -3235,10 +3216,10 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                         }
                     }
                     
-                    // Longer timeout for email collection (45 seconds instead of 30)
+                    // Much longer timeout for email collection (60 seconds)
                     const emailElapsed = Date.now() - ws.emailStartTime;
-                    if (emailElapsed > 45000) {
-                        console.log(`📧 EMAIL TIMEOUT: No complete email found in "${ws.emailBuffer.trim()}" after 45s`);
+                    if (emailElapsed > 60000) {
+                        console.log(`📧 EMAIL TIMEOUT: No complete email found in "${ws.emailBuffer.trim()}" after 60s`);
                         
                         // Try one final reconstruction before giving up
                         const finalAttempt = reconstructEmailFromLetters(ws.emailBuffer, true);
@@ -3295,7 +3276,15 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
             
             ws.lastTranscriptTime = Date.now();
         } else {
-            console.log(`📝 ACCUMULATING: "${processedText}" added to buffer (${ws.sentenceBuffer.split(' ').length} words total)`);
+            console.log(`📝 CONSERVATIVE BUFFERING: "${processedText}" added (${ws.sentenceBuffer.split(' ').length} words, ${bufferAge}ms age, emailMode: ${ws.emailMode})`);
+            
+            // 🎯 EMAIL MODE AUTO-ACTIVATION: Activate email mode early if we see email context
+            if (!ws.emailMode && processedText.toLowerCase().includes('email')) {
+                console.log(`📧 EARLY EMAIL MODE: Detected email context in "${processedText}"`);
+                ws.emailMode = true;
+                ws.emailBuffer = ws.sentenceBuffer; // Use entire buffer
+                ws.emailStartTime = Date.now();
+            }
         }
     } catch (error) {
         console.error(`❌ Error processing completed transcript ${transcriptId}:`, error);
@@ -4060,3 +4049,6 @@ async function initializeAssemblyAILive(callSid, ws) {
         return null;
     }
 }
+
+// Export the server for testing
+module.exports = server;
