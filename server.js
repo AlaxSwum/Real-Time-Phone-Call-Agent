@@ -3719,6 +3719,128 @@ EXAMPLES:
     }
 }
 
+// Initialize HTTP chunked processing for reliable transcription
+function initializeHttpChunkedProcessing(callSid, ws) {
+    console.log(`🎙️ HTTP CHUNKED: Initializing chunked processing for call ${callSid}...`);
+    
+    // Initialize buffers and state
+    ws.chunkBuffer = Buffer.alloc(0);
+    ws.sentenceBuffer = '';
+    ws.lastProcessTime = Date.now();
+    ws.chunkCount = 0;
+    ws.emailMode = false;
+    ws.emailBuffer = '';
+    
+    // Process audio chunks every 1.2 seconds for faster transcription
+    ws.chunkProcessor = setInterval(async () => {
+        if (ws.chunkBuffer.length >= 19200) { // 1.2 seconds of audio at 16kHz
+            try {
+                ws.chunkCount++;
+                console.log(`🔄 HTTP CHUNKED: Processing chunk ${ws.chunkCount} (${ws.chunkBuffer.length} bytes)`);
+                
+                // Create WAV file for this chunk
+                const wavHeader = createWavHeader(ws.chunkBuffer.length);
+                const wavFile = Buffer.concat([wavHeader, ws.chunkBuffer]);
+                
+                // Save temporarily
+                const fs = require('fs');
+                const filename = `chunk_${callSid}_${Date.now()}.wav`;
+                const filepath = `/tmp/${filename}`;
+                fs.writeFileSync(filepath, wavFile);
+                
+                // Create public URL
+                const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+                const host = process.env.NODE_ENV === 'production' 
+                    ? (process.env.RAILWAY_PUBLIC_DOMAIN || 'real-time-phone-call-agent-production.up.railway.app')
+                    : 'localhost:3000';
+                const audioUrl = `${protocol}://${host}/audio/${filename}`;
+                
+                console.log(`🔗 HTTP CHUNKED: Audio URL: ${audioUrl}`);
+                
+                // Request transcription from AssemblyAI
+                const response = await fetch('https://api.assemblyai.com/v2/transcript', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${assemblyAIApiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        audio_url: audioUrl,
+                        language_code: 'en',
+                        punctuate: true,
+                        format_text: true,
+                        speech_model: 'universal',
+                        word_boost: [
+                            // Core business terms
+                            'arrange', 'schedule', 'meeting', 'appointment', 'call', 'phone',
+                            'email', 'gmail', 'outlook', 'yahoo', 'hotmail', 'icloud',
+                            // Time references  
+                            'tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 
+                            'thursday', 'friday', 'saturday', 'sunday', 'time', 'pm', 'am',
+                            // Common speech patterns
+                            'would', 'like', 'could', 'should', 'please', 'thank', 'hello',
+                            'discuss', 'talk', 'speak', 'contact', 'reach', 'connect'
+                        ],
+                        boost_param: 'high',
+                        speaker_labels: false,
+                        speakers_expected: 1,
+                        disfluencies: false,
+                        filter_profanity: false
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log(`📡 HTTP CHUNKED: Transcription request submitted (ID: ${result.id})`);
+                    
+                    // Poll for completion with faster polling
+                    for (let i = 0; i < 8; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 750)); // 0.75 second intervals
+                        
+                        const statusResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${result.id}`, {
+                            headers: { 'Authorization': `Bearer ${assemblyAIApiKey}` }
+                        });
+                        
+                        if (statusResponse.ok) {
+                            const status = await statusResponse.json();
+                            if (status.status === 'completed') {
+                                const transcript = status.text;
+                                if (transcript && transcript.trim().length > 0) {
+                                    console.log(`✅ HTTP CHUNKED: "${transcript}" (confidence: ${Math.round((status.confidence || 0) * 100)}%)`);
+                                    await processCompletedTranscriptSmart(transcript, status.confidence || 0, callSid, ws, result.id);
+                                }
+                                break;
+                            } else if (status.status === 'error') {
+                                console.error(`❌ HTTP CHUNKED: Transcription failed: ${status.error}`);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    const errorText = await response.text();
+                    console.error(`❌ HTTP CHUNKED: Request failed: ${response.status} - ${errorText}`);
+                }
+                
+                // Cleanup
+                try {
+                    fs.unlinkSync(filepath);
+                } catch (e) {
+                    // File may already be cleaned up
+                }
+                
+                // Clear processed audio from buffer
+                ws.chunkBuffer = Buffer.alloc(0);
+                
+            } catch (error) {
+                console.error('❌ HTTP CHUNKED: Processing error:', error);
+                ws.chunkBuffer = Buffer.alloc(0); // Reset buffer on error
+            }
+        }
+    }, 1200); // Process every 1.2 seconds
+    
+    console.log('✅ HTTP CHUNKED: Chunked processing initialized');
+}
+
 // AssemblyAI real-time transcription initialization
 async function initializeAssemblyAILive(callSid, ws) {
     console.log('🎙️ Initializing AssemblyAI real-time transcription for call:', callSid);
