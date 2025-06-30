@@ -397,6 +397,58 @@ app.get('/', (req, res) => {
     });
 });
 
+// Twilio config endpoint for dashboard
+app.get('/twilio-config', (req, res) => {
+    const protocol = req.secure ? 'https' : 'http';
+    const host = req.get('host');
+    res.json({
+        webhook_url: `${protocol}://${host}/webhook`,
+        environment: process.env.NODE_ENV || 'development',
+        status: 'active'
+    });
+});
+
+// Test endpoints for dashboard compatibility
+app.get('/test/transcription-priority', (req, res) => {
+    res.json({
+        primary_service: 'Deepgram',
+        services_available: {
+            deepgram: !!DEEPGRAM_API_KEY,
+            assemblyai: false
+        },
+        api_keys: {
+            deepgram_configured: !!DEEPGRAM_API_KEY
+        },
+        recommendation: DEEPGRAM_API_KEY ? 
+            'Deepgram nova-2 will be used for real-time transcription' : 
+            'Configure DEEPGRAM_API_KEY for real-time transcription',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Test AI processing endpoint (optional)
+app.post('/test/ai-processing', (req, res) => {
+    const { recording_url } = req.body;
+    
+    if (!recording_url) {
+        return res.status(400).json({
+            success: false,
+            error: 'Recording URL required'
+        });
+    }
+    
+    // Simulate processing
+    setTimeout(() => {
+        res.json({
+            success: true,
+            message: 'Audio processing simulation completed',
+            transcript: 'Simulated transcript from test audio',
+            confidence: 0.95,
+            timestamp: new Date().toISOString()
+        });
+    }, 1000);
+});
+
 // ============================================================================
 // SERVER STARTUP
 // ============================================================================
