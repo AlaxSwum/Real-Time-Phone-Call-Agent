@@ -1556,6 +1556,67 @@ async function handleTwilioStreamConnection(ws, req) {
                     
                     activeStreams.delete(callSid);
                     
+                    // 🚀 VOICE LOSS PREVENTION: Flush any remaining sentence buffer when call ends
+                    if (ws.sentenceBuffer && ws.sentenceBuffer.trim().length > 0) {
+                        console.log(`🚨 CALL END FLUSH: Delivering remaining buffer: "${ws.sentenceBuffer}"`);
+                        
+                        let finalBufferText = ws.sentenceBuffer.trim();
+                        
+                        // Add punctuation if missing to make it complete
+                        if (!finalBufferText.match(/[.!?]$/)) {
+                            finalBufferText += '.';
+                        }
+                        
+                        // Broadcast the final buffered content
+                        broadcastToClients({
+                            type: 'live_transcript',
+                            message: finalBufferText,
+                            data: {
+                                callSid: callSid,
+                                text: finalBufferText,
+                                confidence: 0.8,
+                                is_final: true,
+                                provider: 'assemblyai_http_parallel',
+                                transcript_id: 'final_buffer_flush',
+                                processing_mode: 'call_end_flush',
+                                timestamp: new Date().toISOString()
+                            }
+                        });
+                        
+                        // Add to full transcript
+                        fullTranscript += ' ' + finalBufferText;
+                        
+                        // 🎯 FINAL EMAIL CHECK: Try one last email extraction from remaining buffer
+                        if (ws.emailMode && ws.emailBuffer && ws.emailBuffer.trim().length > 0) {
+                            console.log(`📧 FINAL EMAIL ATTEMPT from buffer: "${ws.emailBuffer}"`);
+                            
+                            const finalEmail = reconstructEmailFromLetters(ws.emailBuffer, true);
+                            if (finalEmail) {
+                                console.log(`📧 FINAL EMAIL DETECTED: "${finalEmail}"`);
+                                
+                                broadcastToClients({
+                                    type: 'email_detected',
+                                    message: `Email detected: ${finalEmail}`,
+                                    data: {
+                                        callSid: callSid,
+                                        email: finalEmail,
+                                        source_transcript: ws.emailBuffer.trim(),
+                                        method: 'call_end_final_attempt',
+                                        transcript_id: 'final_email_flush',
+                                        timestamp: new Date().toISOString()
+                                    }
+                                });
+                            }
+                            
+                            // Clear email buffer
+                            ws.emailMode = false;
+                            ws.emailBuffer = '';
+                        }
+                        
+                        // Clear sentence buffer after flushing
+                        ws.sentenceBuffer = '';
+                    }
+                    
                     // Broadcast stream end
                     broadcastToClients({
                         type: 'stream_ended',
@@ -3030,21 +3091,47 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
     try {
         let processedText = transcript.trim();
         
-        // Enhanced sentence completion logic with parallel processing
+        // 🚀 ENHANCED SENTENCE BUFFERING: Prevent voice loss by accumulating fragments
         ws.sentenceBuffer = (ws.sentenceBuffer || '') + ' ' + processedText;
         ws.sentenceBuffer = ws.sentenceBuffer.trim();
         
-        // Extract complete sentences
+        console.log(`🔄 BUFFERING: Added "${processedText}" to buffer: "${ws.sentenceBuffer}"`);
+        
+        // 🎯 ENHANCED TIMEOUT LOGIC: Force delivery if buffer is getting too old
+        const bufferAge = Date.now() - (ws.lastTranscriptTime || Date.now());
+        const forceDelivery = bufferAge > 8000; // Force delivery after 8 seconds to prevent voice loss
+        
+        // Extract complete sentences with more aggressive completion
         const sentences = extractCompleteSentences(ws.sentenceBuffer);
         
-        if (sentences.completeSentences.length > 0) {
-            const finalText = sentences.completeSentences.join(' ');
-            ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
+        // 🚀 VOICE LOSS PREVENTION: Deliver even incomplete sentences if we're forcing or have substantial content
+        const shouldDeliver = sentences.completeSentences.length > 0 || 
+                             forceDelivery || 
+                             (ws.sentenceBuffer.split(' ').length >= 6); // Deliver if we have 6+ words
+        
+        if (shouldDeliver) {
+            let finalText;
             
-            console.log(`📝 PARALLEL COMPLETED: "${finalText}" from ${transcriptId}`);
-            console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
+            if (sentences.completeSentences.length > 0) {
+                // We have complete sentences
+                finalText = sentences.completeSentences.join(' ');
+                ws.sentenceBuffer = sentences.remainingText; // Keep incomplete part
+                console.log(`📝 COMPLETE SENTENCES: "${finalText}"`);
+                console.log(`📋 REMAINING BUFFER: "${ws.sentenceBuffer}"`);
+            } else {
+                // Force delivery of accumulated buffer to prevent voice loss
+                finalText = ws.sentenceBuffer;
+                
+                // Add punctuation if missing to make it more complete
+                if (!finalText.match(/[.!?]$/)) {
+                    finalText += '.';
+                }
+                
+                ws.sentenceBuffer = ''; // Clear buffer after forced delivery
+                console.log(`🚨 FORCED DELIVERY: "${finalText}" (age: ${bufferAge}ms)`);
+            }
             
-            // Broadcast complete sentences only
+            // Broadcast the accumulated text
             broadcastToClients({
                 type: 'live_transcript',
                 message: finalText,
@@ -3055,67 +3142,56 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     is_final: true,
                     provider: 'assemblyai_http_parallel',
                     transcript_id: transcriptId,
-                    processing_mode: '4_second_parallel',
+                    processing_mode: forceDelivery ? '4_second_forced' : '4_second_complete',
+                    buffer_age_ms: bufferAge,
                     timestamp: new Date().toISOString()
                 }
             });
             
-            // 🎯 ENHANCED EMAIL ACCUMULATION: Handle fragmented email spelling
+            // 🎯 ENHANCED EMAIL DETECTION: More aggressive email collection
             const lowerText = finalText.toLowerCase();
             
-            // 🎯 ENHANCED EMAIL MODE: More flexible triggers including phonetic variations
+            // Enhanced email triggers including partial phrases
             const emailTriggers = [
-                'my email is', 'my email address is', 'email me at', 'contact me at',
-                'email is', 'my email', 'email address', 'send email to',
-                'reach me at', 'email me', 'my address is',
-                // 🎯 PHONETIC VARIATIONS for accent support
-                'me my inner', 'my inner', 'my email', 'me email', 'my mail',
-                'email address', 'mail address', 'contact address', 'send mail',
-                'my address', 'email me', 'mail me', 'contact me',
-                // 🎯 SENDING PATTERNS
-                'will send to', 'send to', 'sending to', 'email to', 'mail to',
-                'send you', 'send it to', 'send the email to', 'send details to'
+                'my email', 'email me', 'email is', 'email address', 'contact me',
+                'send email', 'email to', 'reach me', 'my address',
+                // Letters that suggest email spelling
+                'a l', 'l a', 't e', 'e f', 'p s', 'gmail', 'outlook', 'yahoo'
             ];
             
             const hasEmailTrigger = emailTriggers.some(trigger => lowerText.includes(trigger));
             
-            // 🎯 DEBUG: Log trigger checking
             console.log(`🔍 EMAIL TRIGGER CHECK: "${lowerText}" | hasEmailTrigger: ${hasEmailTrigger} | emailMode: ${ws.emailMode}`);
-            if (hasEmailTrigger) {
-                const matchedTrigger = emailTriggers.find(trigger => lowerText.includes(trigger));
-                console.log(`🎯 MATCHED TRIGGER: "${matchedTrigger}"`);
-            }
             
+            // Start email mode more aggressively
             if (!ws.emailMode && hasEmailTrigger) {
                 console.log(`📧 EMAIL MODE ACTIVATED: Starting email collection from "${finalText}"`);
                 ws.emailMode = true;
-                ws.emailBuffer = finalText; // Start with this text
+                ws.emailBuffer = finalText;
                 ws.emailStartTime = Date.now();
             }
             
-            // If in email mode, accumulate fragments
+            // If in email mode, accumulate all fragments
             if (ws.emailMode) {
                 ws.emailBuffer += ' ' + finalText;
                 console.log(`📧 EMAIL ACCUMULATING: "${ws.emailBuffer.trim()}"`);
                 
-                                    // 🎯 ENHANCED: Always try reconstruction first, then standard extraction
-                    console.log(`🔧 ATTEMPTING EMAIL RECONSTRUCTION from buffer: "${ws.emailBuffer.trim()}"`);
-                    let possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
-                    console.log(`🔧 RECONSTRUCTION RESULT: "${possibleEmail}"`);
-                    
-                    // If reconstruction fails, try standard extraction (but avoid false positives)
-                    if (!possibleEmail) {
-                        console.log(`🔧 TRYING STANDARD EXTRACTION as fallback`);
-                        const standardEmail = extractEmailFromTranscript(ws.emailBuffer);
-                        console.log(`🔧 STANDARD EXTRACTION RESULT: "${standardEmail}"`);
-                        // Only accept if it's not a false positive
-                        if (standardEmail && !['meme@gmail.com', 'isis@gmail.com', 'at@gmail.com'].includes(standardEmail.toLowerCase())) {
-                            possibleEmail = standardEmail;
-                        }
-                    }
+                // Enhanced email reconstruction with more aggressive detection
+                let possibleEmail = reconstructEmailFromLetters(ws.emailBuffer);
+                console.log(`🔧 EMAIL RECONSTRUCTION: "${possibleEmail}"`);
                 
-                if (possibleEmail && possibleEmail.length >= 8) { // Reasonable email length
-                    console.log(`📧 EMAIL DETECTED FROM BUFFER: "${possibleEmail}" from accumulated: "${ws.emailBuffer.trim()}"`);
+                // Try standard extraction as fallback
+                if (!possibleEmail) {
+                    const standardEmail = extractEmailFromTranscript(ws.emailBuffer);
+                    if (standardEmail && standardEmail.length >= 5) {
+                        possibleEmail = standardEmail;
+                        console.log(`🔧 STANDARD EMAIL EXTRACTION: "${possibleEmail}"`);
+                    }
+                }
+                
+                // Check if we have a valid email
+                if (possibleEmail && possibleEmail.length >= 6) {
+                    console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from buffer: "${ws.emailBuffer.trim()}"`);
                     
                     broadcastToClients({
                         type: 'email_detected',
@@ -3124,7 +3200,7 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                             callSid: callSid,
                             email: possibleEmail,
                             source_transcript: ws.emailBuffer.trim(),
-                            method: 'parallel_accumulated_fragments',
+                            method: 'enhanced_buffered_accumulation',
                             transcript_id: transcriptId,
                             timestamp: new Date().toISOString()
                         }
@@ -3134,13 +3210,12 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                     ws.emailMode = false;
                     ws.emailBuffer = '';
                 } else {
-                    // Check for potential completion with domain indicator
+                    // Force reconstruction if we see domain indicators
                     const lowerBuffer = ws.emailBuffer.toLowerCase();
                     if (lowerBuffer.includes('gmail') || lowerBuffer.includes('outlook') || lowerBuffer.includes('yahoo')) {
-                        // Try harder reconstruction when we see domain
                         const forceReconstruct = reconstructEmailFromLetters(ws.emailBuffer, true);
-                        if (forceReconstruct && forceReconstruct.length >= 6) {
-                            console.log(`📧 FORCED EMAIL RECONSTRUCTION: "${forceReconstruct}" from: "${ws.emailBuffer.trim()}"`);
+                        if (forceReconstruct && forceReconstruct.length >= 4) {
+                            console.log(`📧 FORCED EMAIL: "${forceReconstruct}" from: "${ws.emailBuffer.trim()}"`);
                             
                             broadcastToClients({
                                 type: 'email_detected',
@@ -3160,40 +3235,51 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
                         }
                     }
                     
-                    // Check for timeout (30 seconds max)
+                    // Longer timeout for email collection (45 seconds instead of 30)
                     const emailElapsed = Date.now() - ws.emailStartTime;
-                    if (emailElapsed > 30000) {
-                        console.log(`📧 EMAIL MODE TIMEOUT: No email found in "${ws.emailBuffer.trim()}" after 30s`);
+                    if (emailElapsed > 45000) {
+                        console.log(`📧 EMAIL TIMEOUT: No complete email found in "${ws.emailBuffer.trim()}" after 45s`);
+                        
+                        // Try one final reconstruction before giving up
+                        const finalAttempt = reconstructEmailFromLetters(ws.emailBuffer, true);
+                        if (finalAttempt) {
+                            console.log(`📧 FINAL EMAIL ATTEMPT: "${finalAttempt}"`);
+                            broadcastToClients({
+                                type: 'email_detected',
+                                message: `Email detected: ${finalAttempt}`,
+                                data: {
+                                    callSid: callSid,
+                                    email: finalAttempt,
+                                    source_transcript: ws.emailBuffer.trim(),
+                                    method: 'timeout_final_attempt',
+                                    transcript_id: transcriptId,
+                                    timestamp: new Date().toISOString()
+                                }
+                            });
+                        }
+                        
                         ws.emailMode = false;
                         ws.emailBuffer = '';
                     }
                 }
             } else {
-                // Standard email detection for complete sentences
+                // Standard email detection for non-email mode
                 const possibleEmail = extractEmailFromTranscript(finalText);
-                if (possibleEmail) {
-                    // 🎯 ENHANCED: Filter false positives in standard detection too
-                    const username = possibleEmail.split('@')[0].toLowerCase();
-                    const falsePositives = ['at', 'me', 'my', 'is', 'isis', 'meme', 'email', 'mail', 'com', 'the', 'and'];
+                if (possibleEmail && possibleEmail.length >= 6) {
+                    console.log(`📧 STANDARD EMAIL DETECTED: "${possibleEmail}" from: "${finalText}"`);
                     
-                    if (username.length >= 5 && !falsePositives.includes(username)) {
-                        console.log(`📧 EMAIL DETECTED: "${possibleEmail}" from transcript: "${finalText}"`);
-                        
-                        broadcastToClients({
-                            type: 'email_detected',
-                            message: `Email detected: ${possibleEmail}`,
-                            data: {
-                                callSid: callSid,
-                                email: possibleEmail,
-                                source_transcript: finalText,
-                                method: 'parallel_standard_detection',
-                                transcript_id: transcriptId,
-                                timestamp: new Date().toISOString()
-                            }
-                        });
-                    } else {
-                        console.log(`📧 BLOCKED FALSE POSITIVE: "${possibleEmail}" from transcript: "${finalText}" (username: "${username}")`);
-                    }
+                    broadcastToClients({
+                        type: 'email_detected',
+                        message: `Email detected: ${possibleEmail}`,
+                        data: {
+                            callSid: callSid,
+                            email: possibleEmail,
+                            source_transcript: finalText,
+                            method: 'standard_detection',
+                            transcript_id: transcriptId,
+                            timestamp: new Date().toISOString()
+                        }
+                    });
                 }
             }
             
@@ -3209,7 +3295,7 @@ async function processCompletedTranscript(transcript, confidence, callSid, ws, t
             
             ws.lastTranscriptTime = Date.now();
         } else {
-            console.log(`📝 PARALLEL ACCUMULATING: "${processedText}" from ${transcriptId} (waiting for complete sentences)`);
+            console.log(`📝 ACCUMULATING: "${processedText}" added to buffer (${ws.sentenceBuffer.split(' ').length} words total)`);
         }
     } catch (error) {
         console.error(`❌ Error processing completed transcript ${transcriptId}:`, error);
