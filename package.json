@@ -1,7 +1,7 @@
 {
   "name": "real-time-phone-call-agent",
   "version": "3.0.0",
-  "description": "Real-time phone call processing with Twilio bridge and AssemblyAI transcription - Railway optimized",
+  "description": "Real-time conference transcription with Twilio Conference and Deepgram streaming - Railway optimized",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,29 +10,28 @@
     "railway:deploy": "railway up",
     "railway:logs": "railway logs",
     "railway:env": "railway env",
-    "check-env": "node -e \"console.log('✅ Environment check:'); console.log('ASSEMBLYAI_API_KEY:', process.env.ASSEMBLYAI_API_KEY ? '✅ SET' : '❌ MISSING'); console.log('BRIDGE_TARGET_NUMBER:', process.env.BRIDGE_TARGET_NUMBER ? '✅ SET' : '❌ MISSING'); console.log('TWILIO_ACCOUNT_SID:', process.env.TWILIO_ACCOUNT_SID ? '✅ SET' : '❌ MISSING'); console.log('TWILIO_AUTH_TOKEN:', process.env.TWILIO_AUTH_TOKEN ? '✅ SET' : '❌ MISSING');\""
+    "check-env": "node -e \"console.log('✅ Environment check:'); console.log('DEEPGRAM_API_KEY:', process.env.DEEPGRAM_API_KEY ? '✅ SET' : '❌ MISSING'); console.log('PARTICIPANT_NUMBER:', process.env.PARTICIPANT_NUMBER ? '✅ SET' : '❌ MISSING'); console.log('WEBHOOK_URL:', process.env.WEBHOOK_URL ? '✅ SET' : '❌ MISSING');\""
   },
   "keywords": [
     "twilio",
     "real-time",
     "transcription",
-    "assemblyai",
+    "deepgram",
+    "conference",
+    "nova-2",
     "phone-calls",
-    "bridge",
     "railway",
     "websocket",
     "speech-to-text",
-    "intent-detection"
+    "streaming"
   ],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
-    "assemblyai": "^4.0.0",
+    "@deepgram/sdk": "^3.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
-    "helmet": "^7.0.0",
-    "openai": "^4.0.0",
     "ws": "^8.13.0"
   },
   "devDependencies": {
