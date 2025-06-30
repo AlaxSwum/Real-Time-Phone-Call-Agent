@@ -564,7 +564,7 @@
         
         function connectWebSocket() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${location.host}/ws`;
+            const wsUrl = `${protocol}//${location.host}/`;
             
             log(`Connecting to WebSocket...`);
             ws = new WebSocket(wsUrl);
@@ -613,11 +613,19 @@
                 log(`${data.type}: ${data.message || ''}`);
                 
                 switch (data.type) {
+                    case 'welcome':
+                        // Handle welcome message from server
+                        log(`Connected to server: ${data.message}`);
+                        if (data.activeConferences !== undefined) {
+                            log(`Active conferences: ${data.activeConferences}`);
+                        }
+                        break;
                     case 'call_started':
                         handleCallStarted(data.data);
                         break;
                     case 'live_transcript':
-                        handleLiveTranscript(data.data);
+                    case 'transcript':
+                        handleLiveTranscript(data.data || data);
                         break;
                     case 'stream_ended':
                         handleCallEnded(data.data);
@@ -765,13 +773,13 @@
                     document.getElementById('webhook-url').textContent = data.webhook_url;
                     log(`Webhook URL loaded: ${data.webhook_url}`);
                 } else {
-                    // Fallback to /voice endpoint
-                    document.getElementById('webhook-url').textContent = `${location.origin}/voice`;
-                    log('Using fallback webhook URL: /voice');
+                    // Fallback to /webhook endpoint
+                    document.getElementById('webhook-url').textContent = `${location.origin}/webhook`;
+                    log('Using fallback webhook URL: /webhook');
                 }
             } catch (error) {
-                // Fallback to /voice endpoint
-                document.getElementById('webhook-url').textContent = `${location.origin}/voice`;
+                // Fallback to /webhook endpoint
+                document.getElementById('webhook-url').textContent = `${location.origin}/webhook`;
                 log(`Error loading webhook URL, using fallback: ${error.message}`);
             }
         }
