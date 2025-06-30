@@ -8,21 +8,14 @@ const path = require('path');
 const fs = require('fs');
 
 // AI Service imports (optional)
-const OpenAI = require('openai');
 const { AssemblyAI } = require('assemblyai');
 
 const app = express();
 const server = http.createServer(app);
 
-// Initialize OpenAI (optional)
-let openai = null;
 if (process.env.OPENAI_API_KEY) {
     try {
-        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-        console.log('🧠 OpenAI initialized');
     } catch (error) {
-        console.error('❌ OpenAI initialization failed:', error.message);
-        openai = null;
     }
 }
 
