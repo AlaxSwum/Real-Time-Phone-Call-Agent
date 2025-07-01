@@ -698,6 +698,158 @@ app.get('/test/debug-audio/:conferenceId?', (req, res) => {
 });
 
 // ============================================================================
+// BRIDGE-BASED ALTERNATIVE (Direct call connection)
+// ============================================================================
+
+// Bridge approach - directly connect calls instead of conference
+app.post('/webhook-bridge', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🌉 Bridge approach - Incoming call: ${From} → ${To} (${CallSid})`);
+    
+    // Store call info
+    activeConferences.set(CallSid, {
+        callSid: CallSid,
+        caller: From,
+        startTime: new Date(),
+        mode: 'bridge'
+    });
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Connecting you directly to the other participant.</Say>
+    <Dial>
+        <Number statusCallback="https://real-time-phone-call-agent-production.up.railway.app/call-status">+447494225623</Number>
+    </Dial>
+</Response>`;
+    
+    console.log(`🌉 Bridge TwiML sent for: ${CallSid}`);
+    res.type('text/xml').send(twiml);
+});
+
+// Simple test conference with different settings
+app.get('/test/minimal-conference', (req, res) => {
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Minimal conference test.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="true"
+            beep="false"
+            muted="false">
+            minimal-test-${Date.now()}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🧪 Minimal conference test accessed`);
+    res.type('text/xml').send(twiml);
+});
+
+// Conference with enhanced debugging
+app.post('/webhook-debug', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🔍 DEBUG webhook - Incoming call: ${From} → ${To} (${CallSid})`);
+    console.log(`🔍 Full request body:`, req.body);
+    
+    const conferenceId = `debug-conf-${CallSid}`;
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const host = req.get('host');
+    
+    // Store conference info
+    activeConferences.set(conferenceId, {
+        callSid: CallSid,
+        caller: From,
+        startTime: new Date(),
+        participants: 1,
+        debug: true
+    });
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Debug conference. You should hear a beep when someone joins.</Say>
+    <Dial>
+        <Conference 
+            statusCallback="${protocol}://${host}/conference-events"
+            statusCallbackEvent="start,end,join,leave"
+            startConferenceOnEnter="false"
+            endConferenceOnExit="false"
+            beep="true"
+            muted="false"
+            region="ireland">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🔍 Debug conference created: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+    
+    // Auto-dial with delay
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            console.log(`🔍 DEBUG: Auto-dialing ${process.env.PARTICIPANT_NUMBER}`);
+            dialParticipantDebug(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 3000);
+    }
+});
+
+// Debug auto-dial function
+async function dialParticipantDebug(conferenceId, participantNumber, req) {
+    if (!twilioClient) {
+        console.log('🔍 DEBUG: No Twilio client available');
+        return;
+    }
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant-debug?conference=${conferenceId}`;
+        
+        console.log(`🔍 DEBUG: Auto-dialing ${participantNumber} to ${participantUrl}`);
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST'
+        });
+        
+        console.log(`🔍 DEBUG: Call created ${call.sid}`);
+        
+    } catch (error) {
+        console.error('🔍 DEBUG: Auto-dial error:', error);
+    }
+}
+
+// Debug participant endpoint
+app.post('/participant-debug', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    const conferenceId = req.query.conference;
+    
+    console.log(`🔍 DEBUG: Participant joining conference ${conferenceId}`);
+    console.log(`🔍 DEBUG: From ${From}, To ${To}, CallSid ${CallSid}`);
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Debug participant joining. Listen for beep.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="false"
+            endConferenceOnExit="false"
+            beep="true"
+            muted="false"
+            region="ireland">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🔍 DEBUG: Participant TwiML sent`);
+    res.type('text/xml').send(twiml);
+});
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
