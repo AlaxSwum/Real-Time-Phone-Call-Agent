@@ -1209,6 +1209,199 @@ app.post('/webhook-emergency', (req, res) => {
 });
 
 // ============================================================================
+// Hybrid Bridge + Recording approach (BEST OF BOTH WORLDS)
+app.post('/webhook-hybrid', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🔄 HYBRID approach - Incoming call: ${From} → ${To} (${CallSid})`);
+    
+    // Store call info for recording processing
+    activeConferences.set(CallSid, {
+        callSid: CallSid,
+        caller: From,
+        startTime: new Date(),
+        mode: 'hybrid'
+    });
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Hybrid system. You'll have real-time conversation, with transcription available after the call.</Say>
+    <Dial record="record-from-start" 
+          recordingStatusCallback="https://real-time-phone-call-agent-production.up.railway.app/recording-complete"
+          timeout="30">
+        <Number>+447494225623</Number>
+    </Dial>
+    <Say voice="alice">Call completed. Processing transcription.</Say>
+</Response>`;
+    
+    console.log(`🔄 HYBRID: Bridge + Recording initiated for ${CallSid}`);
+    res.type('text/xml').send(twiml);
+});
+
+// Conference + Recording approach (Real-time + Post-call accuracy)
+app.post('/webhook-conference-record', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`📼 CONFERENCE+RECORD - Incoming call: ${From} → ${To} (${CallSid})`);
+    
+    const conferenceId = `rec-conf-${CallSid}`;
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const host = req.get('host');
+    
+    // Store conference info
+    activeConferences.set(conferenceId, {
+        callSid: CallSid,
+        caller: From,
+        startTime: new Date(),
+        participants: 1,
+        mode: 'conference_with_recording'
+    });
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Conference with recording. You'll get live transcription plus high-accuracy results after the call.</Say>
+    <Dial>
+        <Conference 
+            statusCallback="${protocol}://${host}/conference-events"
+            statusCallbackEvent="start,end,join,leave"
+            record="record-from-start"
+            recordingStatusCallback="${protocol}://${host}/recording-complete"
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            region="ireland"
+            maxParticipants="10">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`📼 CONFERENCE+RECORD: Created ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+    
+    // Auto-dial participant if configured
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            dialParticipantRecord(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 2000);
+    }
+});
+
+// Auto-dial for recording conference
+async function dialParticipantRecord(conferenceId, participantNumber, req) {
+    if (!twilioClient) return;
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant-record?conference=${conferenceId}`;
+        
+        console.log(`📼 RECORD: Auto-dialing ${participantNumber}`);
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST'
+        });
+        
+        console.log(`📼 RECORD: Call created ${call.sid}`);
+        
+    } catch (error) {
+        console.error('📼 RECORD: Error:', error);
+    }
+}
+
+// Participant endpoint for recording conference
+app.post('/participant-record', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    const conferenceId = req.query.conference;
+    
+    console.log(`📼 RECORD: Participant joining ${conferenceId}`);
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Joining recorded conference.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            region="ireland">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    res.type('text/xml').send(twiml);
+});
+
+// Handle recording completion
+app.post('/recording-complete', (req, res) => {
+    const { CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
+    
+    console.log(`🎬 Recording completed for ${CallSid}`);
+    console.log(`📼 Recording URL: ${RecordingUrl}`);
+    console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
+    
+    // Process the recording for transcription
+    processRecording(RecordingUrl, CallSid, RecordingSid);
+    
+    res.sendStatus(200);
+});
+
+// Process recording for high-accuracy transcription
+async function processRecording(recordingUrl, callSid, recordingSid) {
+    try {
+        console.log(`🎙️ Starting transcription for recording: ${recordingSid}`);
+        
+        // Download recording from Twilio
+        const response = await fetch(recordingUrl);
+        const audioBuffer = await response.arrayBuffer();
+        
+        // Send to Deepgram for transcription
+        const transcription = await deepgram.listen.prerecorded.transcribeFile(
+            audioBuffer,
+            {
+                model: 'nova-2',
+                language: 'en-GB',
+                smart_format: true,
+                punctuate: true,
+                diarize: true,
+                utterances: true,
+                detect_language: false
+            }
+        );
+        
+        const transcript = transcription.result.results.channels[0].alternatives[0].transcript;
+        const confidence = transcription.result.results.channels[0].alternatives[0].confidence;
+        
+        console.log(`✅ High-accuracy transcript ready (${Math.round(confidence * 100)}% confidence):`);
+        console.log(`📝 "${transcript}"`);
+        
+        // Store and broadcast the high-accuracy transcript
+        const transcriptData = {
+            type: 'final_transcript',
+            callSid: callSid,
+            recordingSid: recordingSid,
+            text: transcript,
+            confidence: confidence,
+            accuracy_type: 'high_accuracy_post_call',
+            timestamp: new Date().toISOString()
+        };
+        
+        // Broadcast to all connected clients
+        broadcastTranscript(transcriptData);
+        
+        // Store in database if needed
+        // await storeTranscript(transcriptData);
+        
+    } catch (error) {
+        console.error('❌ Recording transcription error:', error);
+    }
+}
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
