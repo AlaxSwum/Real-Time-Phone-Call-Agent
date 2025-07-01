@@ -439,6 +439,18 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
     try {
         console.log(`🎯 Multi-service transcription for recording: ${recordingSid}`);
         
+        // Broadcast processing start
+        broadcastTranscript({
+            type: 'transcription_processing',
+            callSid: callSid,
+            recordingSid: recordingSid,
+            message: 'Processing with Deepgram and AssemblyAI...',
+            timestamp: new Date().toISOString()
+        });
+        
+        // Wait a bit for recording to be available
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         // Process with both services in parallel
         const [deepgramResult, assemblyaiResult] = await Promise.allSettled([
             processWithDeepgram(recordingUrl),
@@ -448,43 +460,62 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
         let deepgramTranscript = null;
         let assemblyaiTranscript = null;
         
-        if (deepgramResult.status === 'fulfilled') {
+        if (deepgramResult.status === 'fulfilled' && deepgramResult.value) {
             deepgramTranscript = deepgramResult.value;
             console.log(`🔵 Deepgram result: ${Math.round(deepgramTranscript.confidence * 100)}% confidence`);
+        } else {
+            console.log(`🔵 Deepgram failed:`, deepgramResult.reason);
         }
         
         if (assemblyaiResult.status === 'fulfilled' && assemblyaiResult.value) {
             assemblyaiTranscript = assemblyaiResult.value;
             console.log(`🟡 AssemblyAI result: ${Math.round(assemblyaiTranscript.confidence * 100)}% confidence`);
+        } else {
+            console.log(`🟡 AssemblyAI not available or failed`);
         }
         
         // Fuse the results
         const fusedResult = fuseTranscripts(deepgramTranscript, assemblyaiTranscript);
         
-        console.log(`✅ Multi-service transcript ready (${Math.round(fusedResult.confidence * 100)}% confidence):`);
-        console.log(`📝 "${fusedResult.text}"`);
-        
-        // Broadcast the enhanced transcript
-        const transcriptData = {
-            type: 'final_transcript_multiservice',
-            callSid: callSid,
-            recordingSid: recordingSid,
-            text: fusedResult.text,
-            confidence: fusedResult.confidence,
-            accuracy_type: 'multi_service_high_accuracy',
-            services_used: fusedResult.services_used,
-            source: fusedResult.source,
-            individual_results: {
-                deepgram: deepgramTranscript,
-                assemblyai: assemblyaiTranscript
-            },
-            timestamp: new Date().toISOString()
-        };
-        
-        broadcastTranscript(transcriptData);
+        if (fusedResult && fusedResult.text) {
+            console.log(`✅ Multi-service transcript ready (${Math.round(fusedResult.confidence * 100)}% confidence):`);
+            console.log(`📝 "${fusedResult.text}"`);
+            
+            // Broadcast the enhanced transcript
+            const transcriptData = {
+                type: 'final_transcript_multiservice',
+                callSid: callSid,
+                recordingSid: recordingSid,
+                text: fusedResult.text,
+                confidence: fusedResult.confidence,
+                accuracy_type: 'multi_service_high_accuracy',
+                services_used: fusedResult.services_used || ['deepgram'],
+                source: fusedResult.source || 'deepgram_primary',
+                individual_results: {
+                    deepgram: deepgramTranscript,
+                    assemblyai: assemblyaiTranscript
+                },
+                timestamp: new Date().toISOString()
+            };
+            
+            broadcastTranscript(transcriptData);
+        } else {
+            throw new Error('No valid transcription results');
+        }
         
     } catch (error) {
         console.error('❌ Multi-service recording transcription error:', error);
+        
+        // Broadcast error
+        broadcastTranscript({
+            type: 'transcription_error',
+            callSid: callSid,
+            recordingSid: recordingSid,
+            message: 'Transcription failed - trying fallback...',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+        
         // Fallback to single service
         processRecording(recordingUrl, callSid, recordingSid);
     }
@@ -653,8 +684,38 @@ app.post('/conference-events', (req, res) => {
 
 // Handle call status updates
 app.post('/call-status', (req, res) => {
-    const { CallSid, CallStatus, Direction } = req.body;
+    const { CallSid, CallStatus, Direction, From, To } = req.body;
     console.log(`📞 Call status: ${CallSid} → ${CallStatus} (${Direction})`);
+    
+    // Clean up conference on call end
+    if (['completed', 'busy', 'failed', 'no-answer', 'canceled'].includes(CallStatus)) {
+        activeConferences.delete(CallSid);
+        console.log(`🧹 Cleaned up call ${CallSid} - Status: ${CallStatus}`);
+        
+        // Broadcast call ended
+        broadcastTranscript({
+            type: 'call_ended',
+            callSid: CallSid,
+            status: CallStatus,
+            from: From,
+            to: To,
+            direction: Direction,
+            message: `Call ${CallStatus}`,
+            timestamp: new Date().toISOString()
+        });
+    } else {
+        // Broadcast call status to WebSocket clients
+        broadcastTranscript({
+            type: 'call_status',
+            callSid: CallSid,
+            status: CallStatus,
+            from: From,
+            to: To,
+            direction: Direction,
+            message: `Call ${CallStatus}`,
+            timestamp: new Date().toISOString()
+        });
+    }
     
     switch (CallStatus) {
         case 'ringing':
@@ -693,11 +754,21 @@ app.get('/health', (req, res) => {
 
 // Status endpoint
 app.get('/status', (req, res) => {
-        res.json({
+    // Get active calls info with duration
+    const activeCalls = Array.from(activeConferences.values()).map(call => ({
+        callSid: call.callSid,
+        caller: call.caller,
+        mode: call.mode,
+        startTime: call.startTime,
+        duration: Math.floor((new Date() - call.startTime) / 1000)
+    }));
+    
+    res.json({
         server: 'Real-Time Conference Transcription',
         version: '4.0-multiservice',
         architecture: assemblyai ? 'Multi-Service AI (Deepgram + AssemblyAI)' : 'Enhanced Deepgram Streaming',
-        activeConferences: Array.from(activeConferences.entries()),
+        activeConferences: activeConferences.size,
+        activeCalls: activeCalls,
         features: [
             'twilio-conference', 
             'enhanced-deepgram', 
@@ -724,8 +795,8 @@ app.get('/status', (req, res) => {
             '/webhook-emergency': 'Simple bridge (audio test)',
             '/webhook': 'Original conference'
         },
-            timestamp: new Date().toISOString()
-        });
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Root endpoint
@@ -1389,14 +1460,30 @@ app.post('/webhook-emergency', (req, res) => {
     const { CallSid, From, To } = req.body;
     console.log(`🚨 EMERGENCY bridge test: ${From} → ${To} (${CallSid})`);
     
+    // Store call info
+    activeConferences.set(CallSid, {
+        callSid: CallSid,
+        caller: From,
+        startTime: new Date(),
+        mode: 'emergency_bridge'
+    });
+    
+    // Broadcast call start to dashboard
+    broadcastTranscript({
+        type: 'call_started',
+        callSid: CallSid,
+        caller: From,
+        mode: 'emergency_bridge',
+        message: 'Emergency bridge call connected',
+        timestamp: new Date().toISOString()
+    });
+    
     // Direct bridge - no conference, just connect the calls
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Emergency bridge test. Connecting you directly.</Say>
     <Dial timeout="30">
         <Number>+447494225623</Number>
     </Dial>
-    <Say voice="alice">Bridge test complete.</Say>
 </Response>`;
     
     console.log(`🚨 EMERGENCY: Direct bridge initiated`);
@@ -1538,6 +1625,16 @@ app.post('/recording-complete', (req, res) => {
     console.log(`🎬 Recording completed for ${CallSid}`);
     console.log(`📼 Recording URL: ${RecordingUrl}`);
     console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
+    
+    // Broadcast recording completion to dashboard
+    broadcastTranscript({
+        type: 'call_ended',
+        callSid: CallSid,
+        recordingSid: RecordingSid,
+        duration: RecordingDuration,
+        message: 'Call ended - Processing transcription...',
+        timestamp: new Date().toISOString()
+    });
     
     // Process the recording for transcription
     processRecordingMultiService(RecordingUrl, CallSid, RecordingSid);
@@ -1769,17 +1866,25 @@ app.post('/webhook-hybrid-enhanced', (req, res) => {
         multiService: assemblyai ? true : false
     });
     
+    // Broadcast call start to dashboard
+    broadcastTranscript({
+        type: 'call_started',
+        callSid: CallSid,
+        caller: From,
+        mode: 'hybrid_enhanced',
+        message: 'Call connected - Recording for enhanced transcription',
+        timestamp: new Date().toISOString()
+    });
+    
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hybrid enhanced system. Perfect conversation quality${assemblyai ? ' with multi-service AI transcription' : ' with enhanced Deepgram transcription'}.</Say>
     <Dial record="record-from-start" 
           recordingStatusCallback="https://real-time-phone-call-agent-production.up.railway.app/recording-complete"
           timeout="30">
         <Number>+447494225623</Number>
     </Dial>
-    <Say voice="alice">Call completed. Processing enhanced transcription.</Say>
 </Response>`;
     
-    console.log(`🔥 HYBRID ENHANCED: Bridge + Multi-service recording for ${CallSid}`);
+    console.log(`🔥 HYBRID ENHANCED: Direct bridge + Multi-service recording for ${CallSid}`);
     res.type('text/xml').send(twiml);
 });
