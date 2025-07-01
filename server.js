@@ -81,6 +81,7 @@ app.post('/webhook', (req, res) => {
             endConferenceOnExit="false"
             waitUrl=""
             beep="false"
+            region="dublin"
             maxParticipants="10">
             ${conferenceId}
         </Conference>
@@ -134,6 +135,7 @@ app.post('/participant', (req, res) => {
             waitUrl=""
             beep="false"
             muted="false"
+            region="dublin"
             maxParticipants="10">
             ${conferenceId}
         </Conference>
@@ -655,6 +657,7 @@ app.get('/test/simple-conference', (req, res) => {
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="false"
+            region="dublin"
             waitUrl="">
             simple-test-conference
         </Conference>
@@ -662,6 +665,29 @@ app.get('/test/simple-conference', (req, res) => {
 </Response>`;
     
     console.log(`🧪 Simple conference test accessed`);
+    res.type('text/xml').send(twiml);
+});
+
+// Debug audio endpoint - creates two separate calls to same conference
+app.get('/test/debug-audio/:conferenceId?', (req, res) => {
+    const conferenceId = req.params.conferenceId || `debug-${Date.now()}`;
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Debug test. Conference ID is ${conferenceId}. You should hear yourself if you call this twice.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="true"
+            region="dublin"
+            waitUrl="">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🔧 Audio debug test for conference: ${conferenceId}`);
     res.type('text/xml').send(twiml);
 });
 
