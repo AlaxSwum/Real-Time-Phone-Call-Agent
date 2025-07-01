@@ -72,6 +72,9 @@ app.post('/webhook', (req, res) => {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Welcome! Connecting you to the conference.</Say>
+    <Start>
+        <Stream url="${streamUrl}" track="inbound_track" />
+    </Start>
     <Dial>
         <Conference 
             statusCallback="${protocol}://${host}/conference-events"
@@ -82,9 +85,6 @@ app.post('/webhook', (req, res) => {
             ${conferenceId}
         </Conference>
     </Dial>
-    <Start>
-        <Stream url="${streamUrl}" track="both_tracks" />
-    </Start>
 </Response>`;
     
     console.log(`🎪 Conference created: ${conferenceId}`);
@@ -128,7 +128,9 @@ app.post('/participant', (req, res) => {
     <Dial>
         <Conference 
             statusCallback="${protocol}://${req.get('host')}/conference-events"
-            statusCallbackEvent="start,end,join,leave">
+            statusCallbackEvent="start,end,join,leave"
+            startConferenceOnEnter="false"
+            endConferenceOnExit="false">
             ${conferenceId}
         </Conference>
     </Dial>
@@ -299,6 +301,11 @@ function handleDeepgramStream(ws, req) {
                         // Send audio directly to Deepgram (it handles mulaw format)
                         const audioBuffer = Buffer.from(data.media.payload, 'base64');
                         deepgramLive.send(audioBuffer);
+                        
+                        // Debug: Log audio reception every 50 packets
+                        if (data.sequenceNumber && parseInt(data.sequenceNumber) % 50 === 0) {
+                            console.log(`🎵 Audio packet #${data.sequenceNumber} received (${audioBuffer.length} bytes)`);
+                        }
                     }
                     break;
                     
