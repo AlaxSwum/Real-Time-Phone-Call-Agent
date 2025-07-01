@@ -792,6 +792,8 @@
         }
         
         function handleCallEnded(callData) {
+            console.log('Frontend: Handling call ended:', callData);
+            
             const statusEl = document.getElementById('call-status');
             statusEl.className = 'call-status';
             statusEl.innerHTML = `
@@ -799,6 +801,18 @@
                 <p>Call +441733964789 to start new session</p>
                 ${callData.duration ? `<p>Duration: ${callData.duration} seconds</p>` : ''}
             `;
+            
+            // Also update transcript area to show call ended
+            const transcriptEl = document.getElementById('transcript-area');
+            if (transcriptEl.innerHTML.includes('Listening for speech') || transcriptEl.innerHTML.includes('Processing transcription')) {
+                transcriptEl.innerHTML = `
+                    <div style="text-align: center; color: #666;">
+                        <p>📞 Call ended</p>
+                        <p>Transcription will appear below if available...</p>
+                    </div>
+                `;
+            }
+            
             log(`Call ended: ${callData.callSid} - ${callData.status || 'completed'}`);
         }
         

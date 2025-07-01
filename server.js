@@ -438,6 +438,7 @@ function fuseTranscripts(deepgramResult, assemblyaiResult) {
 async function processRecordingMultiService(recordingUrl, callSid, recordingSid) {
     try {
         console.log(`🎯 Multi-service transcription for recording: ${recordingSid}`);
+        console.log(`📼 Recording URL: ${recordingUrl}`);
         
         // Broadcast processing start
         broadcastTranscript({
@@ -449,9 +450,23 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
         });
         
         // Wait a bit for recording to be available
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('⏳ Waiting 3 seconds for recording to be available...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Verify recording URL is accessible
+        try {
+            const testResponse = await fetch(recordingUrl, { method: 'HEAD' });
+            console.log(`🔍 Recording URL check: ${testResponse.status} ${testResponse.statusText}`);
+            if (!testResponse.ok) {
+                throw new Error(`Recording not accessible: ${testResponse.status}`);
+            }
+        } catch (error) {
+            console.error('⚠️ Recording URL check failed:', error);
+            // Continue anyway, might still work
+        }
         
         // Process with both services in parallel
+        console.log('🚀 Starting parallel transcription processing...');
         const [deepgramResult, assemblyaiResult] = await Promise.allSettled([
             processWithDeepgram(recordingUrl),
             assemblyai ? processWithAssemblyAI(recordingUrl) : Promise.resolve(null)
@@ -463,6 +478,7 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
         if (deepgramResult.status === 'fulfilled' && deepgramResult.value) {
             deepgramTranscript = deepgramResult.value;
             console.log(`🔵 Deepgram result: ${Math.round(deepgramTranscript.confidence * 100)}% confidence`);
+            console.log(`🔵 Deepgram text: "${deepgramTranscript.text}"`);
         } else {
             console.log(`🔵 Deepgram failed:`, deepgramResult.reason);
         }
@@ -470,6 +486,7 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
         if (assemblyaiResult.status === 'fulfilled' && assemblyaiResult.value) {
             assemblyaiTranscript = assemblyaiResult.value;
             console.log(`🟡 AssemblyAI result: ${Math.round(assemblyaiTranscript.confidence * 100)}% confidence`);
+            console.log(`🟡 AssemblyAI text: "${assemblyaiTranscript.text}"`);
         } else {
             console.log(`🟡 AssemblyAI not available or failed`);
         }
@@ -477,9 +494,9 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
         // Fuse the results
         const fusedResult = fuseTranscripts(deepgramTranscript, assemblyaiTranscript);
         
-        if (fusedResult && fusedResult.text) {
+        if (fusedResult && fusedResult.text && fusedResult.text.trim().length > 0) {
             console.log(`✅ Multi-service transcript ready (${Math.round(fusedResult.confidence * 100)}% confidence):`);
-            console.log(`📝 "${fusedResult.text}"`);
+            console.log(`📝 FINAL: "${fusedResult.text}"`);
             
             // Broadcast the enhanced transcript
             const transcriptData = {
@@ -498,9 +515,10 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
                 timestamp: new Date().toISOString()
             };
             
+            console.log('🔊 Broadcasting final transcript...');
             broadcastTranscript(transcriptData);
         } else {
-            throw new Error('No valid transcription results');
+            throw new Error('No valid transcription results or empty transcript');
         }
         
     } catch (error) {
@@ -517,34 +535,69 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
         });
         
         // Fallback to single service
+        console.log('🔄 Attempting fallback to single service...');
         processRecording(recordingUrl, callSid, recordingSid);
     }
 }
 
 // Process recording with Deepgram
 async function processWithDeepgram(recordingUrl) {
-    const response = await fetch(recordingUrl);
-    const audioBuffer = await response.arrayBuffer();
-    
-    const transcription = await deepgram.listen.prerecorded.transcribeFile(
-        audioBuffer,
-        {
-            model: 'nova-2',
-            language: 'en-GB',
-            smart_format: true,
-            punctuate: true,
-            diarize: true,
-            utterances: true,
-            detect_language: false,
-            keywords: ['meeting', 'schedule', 'business', 'call', 'appointment', 'price', 'cost'],
-            keyword_boost: 'medium'
+    try {
+        console.log('🔵 Deepgram: Downloading audio from:', recordingUrl);
+        const response = await fetch(recordingUrl);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
         }
-    );
-    
-    const transcript = transcription.result.results.channels[0].alternatives[0].transcript;
-    const confidence = transcription.result.results.channels[0].alternatives[0].confidence;
-    
-    return { text: transcript, confidence: confidence, service: 'deepgram' };
+        
+        const audioBuffer = await response.arrayBuffer();
+        console.log(`🔵 Deepgram: Downloaded ${audioBuffer.byteLength} bytes`);
+        
+        if (audioBuffer.byteLength === 0) {
+            throw new Error('Empty audio file received');
+        }
+        
+        console.log('🔵 Deepgram: Starting transcription...');
+        const transcription = await deepgram.listen.prerecorded.transcribeFile(
+            audioBuffer,
+            {
+                model: 'nova-2',
+                language: 'en-GB',
+                smart_format: true,
+                punctuate: true,
+                diarize: true,
+                utterances: true,
+                detect_language: false,
+                keywords: ['meeting', 'schedule', 'business', 'call', 'appointment', 'price', 'cost'],
+                keyword_boost: 'medium'
+            }
+        );
+        
+        console.log('🔵 Deepgram: Raw response received');
+        
+        if (!transcription.result || !transcription.result.results || !transcription.result.results.channels) {
+            throw new Error('Invalid Deepgram response structure');
+        }
+        
+        const channel = transcription.result.results.channels[0];
+        if (!channel || !channel.alternatives || channel.alternatives.length === 0) {
+            throw new Error('No transcription alternatives found');
+        }
+        
+        const transcript = channel.alternatives[0].transcript;
+        const confidence = channel.alternatives[0].confidence;
+        
+        if (!transcript || transcript.trim().length === 0) {
+            throw new Error('Empty transcript returned');
+        }
+        
+        console.log(`🔵 Deepgram: Success - ${transcript.length} characters transcribed`);
+        return { text: transcript, confidence: confidence, service: 'deepgram' };
+        
+    } catch (error) {
+        console.error('🔵 Deepgram processing error:', error);
+        throw error;
+    }
 }
 
 // Process recording with AssemblyAI
@@ -581,15 +634,31 @@ async function processWithAssemblyAI(recordingUrl) {
 
 // Broadcast transcript to all connected clients
 function broadcastTranscript(data) {
+    const clientCount = transcriptClients.size;
+    console.log(`📡 Broadcasting to ${clientCount} clients:`, data.type, data.message || '');
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
     transcriptClients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             try {
                 client.send(JSON.stringify(data));
+                successCount++;
             } catch (error) {
                 console.error('Broadcast error:', error);
+                errorCount++;
+                // Remove dead clients
+                transcriptClients.delete(client);
             }
+        } else {
+            // Remove disconnected clients
+            transcriptClients.delete(client);
+            errorCount++;
         }
     });
+    
+    console.log(`📡 Broadcast result: ${successCount} successful, ${errorCount} failed`);
 }
 
 // Simple intent detection
@@ -685,15 +754,26 @@ app.post('/conference-events', (req, res) => {
 // Handle call status updates
 app.post('/call-status', (req, res) => {
     const { CallSid, CallStatus, Direction, From, To } = req.body;
-    console.log(`📞 Call status: ${CallSid} → ${CallStatus} (${Direction})`);
+    console.log(`📞 Call status: ${CallSid} → ${CallStatus} (${Direction}) - ${From} → ${To}`);
     
     // Clean up conference on call end
     if (['completed', 'busy', 'failed', 'no-answer', 'canceled'].includes(CallStatus)) {
+        // Clean up by CallSid AND check for related conference IDs
         activeConferences.delete(CallSid);
-        console.log(`🧹 Cleaned up call ${CallSid} - Status: ${CallStatus}`);
         
-        // Broadcast call ended
-        broadcastTranscript({
+        // Also clean up any conferences that might be related to this call
+        const keysToDelete = [];
+        for (const [key, conf] of activeConferences.entries()) {
+            if (conf.callSid === CallSid || key.includes(CallSid)) {
+                keysToDelete.push(key);
+            }
+        }
+        keysToDelete.forEach(key => activeConferences.delete(key));
+        
+        console.log(`🧹 Cleaned up call ${CallSid} and ${keysToDelete.length} related conferences - Status: ${CallStatus}`);
+        
+        // Broadcast call ended to ALL clients
+        const endMessage = {
             type: 'call_ended',
             callSid: CallSid,
             status: CallStatus,
@@ -702,10 +782,14 @@ app.post('/call-status', (req, res) => {
             direction: Direction,
             message: `Call ${CallStatus}`,
             timestamp: new Date().toISOString()
-        });
+        };
+        
+        console.log('🔊 Broadcasting call end to dashboard:', endMessage);
+        broadcastTranscript(endMessage);
+        
     } else {
         // Broadcast call status to WebSocket clients
-        broadcastTranscript({
+        const statusMessage = {
             type: 'call_status',
             callSid: CallSid,
             status: CallStatus,
@@ -714,7 +798,10 @@ app.post('/call-status', (req, res) => {
             direction: Direction,
             message: `Call ${CallStatus}`,
             timestamp: new Date().toISOString()
-        });
+        };
+        
+        console.log('🔊 Broadcasting call status:', statusMessage);
+        broadcastTranscript(statusMessage);
     }
     
     switch (CallStatus) {
@@ -1626,17 +1713,32 @@ app.post('/recording-complete', (req, res) => {
     console.log(`📼 Recording URL: ${RecordingUrl}`);
     console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
     
+    // Clean up active conferences for this call
+    activeConferences.delete(CallSid);
+    const keysToDelete = [];
+    for (const [key, conf] of activeConferences.entries()) {
+        if (conf.callSid === CallSid || key.includes(CallSid)) {
+            keysToDelete.push(key);
+        }
+    }
+    keysToDelete.forEach(key => activeConferences.delete(key));
+    console.log(`🧹 Recording complete - cleaned up ${keysToDelete.length + 1} conference entries`);
+    
     // Broadcast recording completion to dashboard
-    broadcastTranscript({
+    const completionMessage = {
         type: 'call_ended',
         callSid: CallSid,
         recordingSid: RecordingSid,
         duration: RecordingDuration,
         message: 'Call ended - Processing transcription...',
         timestamp: new Date().toISOString()
-    });
+    };
+    
+    console.log('🔊 Broadcasting recording completion:', completionMessage);
+    broadcastTranscript(completionMessage);
     
     // Process the recording for transcription
+    console.log(`🎯 Starting multi-service transcription for ${RecordingSid}`);
     processRecordingMultiService(RecordingUrl, CallSid, RecordingSid);
     
     res.sendStatus(200);
