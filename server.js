@@ -59,7 +59,8 @@ app.post('/webhook', (req, res) => {
     // Railway always uses HTTPS, force it for production
     const protocol = process.env.NODE_ENV === 'production' ? 'https' : (req.secure ? 'https' : 'http');
     const host = req.get('host');
-    const streamUrl = `${protocol === 'https' ? 'wss' : 'ws'}://${host}/deepgram?conference=${conferenceId}`;
+    // Temporarily disable streaming to focus on audio-only
+    // const streamUrl = `${protocol === 'https' ? 'wss' : 'ws'}://${host}/deepgram?conference=${conferenceId}`;
     
     // Store conference info
     activeConferences.set(conferenceId, {
@@ -81,6 +82,7 @@ app.post('/webhook', (req, res) => {
             endConferenceOnExit="false"
             waitUrl=""
             beep="false"
+            muted="false"
             region="ireland"
             maxParticipants="10">
             ${conferenceId}
@@ -464,7 +466,7 @@ app.post('/conference-events', (req, res) => {
                     console.log(`🎯 CONFERENCE READY: Both participants should be able to hear each other!`);
                 }
             }
-            break;
+                    break;
         case 'participant-leave':
             console.log(`👋 Participant left: ${CallSid}`);
             break;
@@ -481,7 +483,7 @@ app.post('/call-status', (req, res) => {
     switch (CallStatus) {
         case 'ringing':
             console.log(`📞 Auto-dial ringing: ${CallSid}`);
-                    break;
+                            break;
         case 'answered':
             console.log(`✅ Auto-dial answered: ${CallSid}`);
             break;
@@ -504,18 +506,18 @@ app.post('/call-status', (req, res) => {
 
 // Health check
 app.get('/health', (req, res) => {
-    res.json({
+        res.json({
         status: 'healthy',
         activeConferences: activeConferences.size,
         connectedClients: transcriptClients.size,
         deepgramConfigured: !!DEEPGRAM_API_KEY,
-        timestamp: new Date().toISOString()
-    });
+            timestamp: new Date().toISOString()
+        });
 });
 
 // Status endpoint
 app.get('/status', (req, res) => {
-        res.json({
+    res.json({
         server: 'Real-Time Conference Transcription',
         version: '3.0-deepgram',
         architecture: 'Conference + Deepgram Streaming',
@@ -528,7 +530,7 @@ app.get('/status', (req, res) => {
             auto_dial_enabled: !!(twilioClient && PARTICIPANT_NUMBER)
         },
             timestamp: new Date().toISOString()
-        });
+    });
 });
 
 // Root endpoint
@@ -571,7 +573,7 @@ app.get('/test/transcription-priority', (req, res) => {
         recommendation: DEEPGRAM_API_KEY ? 
             'Deepgram nova-2 will be used for real-time transcription' : 
             'Configure DEEPGRAM_API_KEY for real-time transcription',
-                    timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -614,7 +616,8 @@ app.get('/test/participant', (req, res) => {
             statusCallbackEvent="start,end,join,leave"
             startConferenceOnEnter="true"
             beep="false"
-            muted="false">
+            muted="false"
+            region="ireland">
             ${conferenceId}
         </Conference>
     </Dial>
@@ -637,12 +640,13 @@ app.post('/test/conference-audio', (req, res) => {
             endConferenceOnExit="false"
             beep="false"
             muted="false"
+            region="ireland"
             waitUrl="">
             ${conferenceId}
         </Conference>
     </Dial>
 </Response>`;
-    
+        
     console.log(`🎵 Audio test for conference: ${conferenceId}`);
     res.type('text/xml').send(twiml);
 });
@@ -657,13 +661,14 @@ app.get('/test/simple-conference', (req, res) => {
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="false"
+            muted="false"
             region="ireland"
             waitUrl="">
             simple-test-conference
         </Conference>
     </Dial>
 </Response>`;
-    
+        
     console.log(`🧪 Simple conference test accessed`);
     res.type('text/xml').send(twiml);
 });
@@ -680,6 +685,7 @@ app.get('/test/debug-audio/:conferenceId?', (req, res) => {
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="true"
+            muted="false"
             region="ireland"
             waitUrl="">
             ${conferenceId}
