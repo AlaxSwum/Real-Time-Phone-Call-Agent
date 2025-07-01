@@ -491,6 +491,7 @@
                     <button class="btn" onclick="testAPI()">Test API Health</button>
                     <button class="btn" onclick="testDeepgram()">Test Deepgram</button>
                     <button class="btn" onclick="showTestModal()">Test AI Processing</button>
+                    <button class="btn btn-secondary" onclick="clearCallStatus()" style="background: #dc3545; color: white;">Clear Call Status</button>
                 </div>
             </div>
             
@@ -861,6 +862,45 @@
                 alertEl.className = 'alert error';
                 alertEl.textContent = `Error: ${error.message}`;
                 log(`AI test failed: ${error.message}`);
+            }
+        }
+        
+        // Clear stuck call status
+        async function clearCallStatus() {
+            log('Clearing stuck call status...');
+            
+            try {
+                const response = await fetch('/cleanup-calls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    log(`Call status cleared: ${data.message}`);
+                    
+                    // Reset call status display
+                    const statusEl = document.getElementById('call-status');
+                    statusEl.className = 'call-status';
+                    statusEl.innerHTML = `
+                        <p>No active calls</p>
+                        <p>Call +441733964789 to start</p>
+                    `;
+                    
+                    // Reset transcript area
+                    const transcriptEl = document.getElementById('transcript-area');
+                    transcriptEl.innerHTML = `
+                        <p style="text-align: center; color: #666; margin-top: 50px;">
+                            Waiting for calls...
+                        </p>
+                    `;
+                    
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+            } catch (error) {
+                log(`Clear status failed: ${error.message}`);
             }
         }
         

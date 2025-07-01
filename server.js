@@ -886,6 +886,34 @@ app.get('/status', (req, res) => {
     });
 });
 
+// Manual cleanup endpoint
+app.post('/cleanup-calls', (req, res) => {
+    const beforeCount = activeConferences.size;
+    
+    // Clear all active conferences
+    const cleanedCalls = Array.from(activeConferences.values());
+    activeConferences.clear();
+    
+    console.log(`🧹 Manual cleanup: Removed ${beforeCount} active calls`);
+    
+    // Broadcast cleanup to all dashboard clients
+    cleanedCalls.forEach(call => {
+        broadcastTranscript({
+            type: 'call_ended',
+            callSid: call.callSid,
+            status: 'manual_cleanup',
+            message: 'Call manually cleared',
+            timestamp: new Date().toISOString()
+        });
+    });
+    
+    res.json({
+        success: true,
+        message: `Cleaned up ${beforeCount} active calls`,
+        timestamp: new Date().toISOString()
+    });
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({
@@ -903,10 +931,11 @@ app.get('/', (req, res) => {
 
 // Twilio config endpoint for dashboard
 app.get('/twilio-config', (req, res) => {
-    const protocol = req.secure ? 'https' : 'http';
+    // Force HTTPS for Railway production
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : (req.secure ? 'https' : 'http');
     const host = req.get('host');
     res.json({
-        webhook_url: `${protocol}://${host}/webhook`,
+        webhook_url: `${protocol}://${host}/webhook-hybrid-enhanced`,
         environment: process.env.NODE_ENV || 'development',
         status: 'active'
     });
@@ -1758,7 +1787,48 @@ server.listen(PORT, () => {
     console.log(`🎯 Auto-dial status: ${(twilioClient && PARTICIPANT_NUMBER) ? 'ENABLED' : 'DISABLED'}`);
     console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`✅ Ready for Twilio webhook integration`);
+    
+    // Start cleanup timer for stuck calls
+    startCallCleanupTimer();
 });
+
+// Cleanup timer to remove stuck call statuses
+function startCallCleanupTimer() {
+    setInterval(() => {
+        const now = new Date();
+        const keysToDelete = [];
+        
+        for (const [key, call] of activeConferences.entries()) {
+            const callAge = now - call.startTime;
+            const maxAge = 10 * 60 * 1000; // 10 minutes
+            
+            if (callAge > maxAge) {
+                console.log(`🧹 Auto-cleanup: Removing stale call ${key} (${Math.round(callAge / 60000)}min old)`);
+                keysToDelete.push(key);
+            }
+        }
+        
+        if (keysToDelete.length > 0) {
+            keysToDelete.forEach(key => {
+                const call = activeConferences.get(key);
+                activeConferences.delete(key);
+                
+                // Broadcast cleanup to dashboard
+                broadcastTranscript({
+                    type: 'call_ended',
+                    callSid: call.callSid,
+                    status: 'cleanup',
+                    message: 'Call auto-cleaned due to age',
+                    timestamp: new Date().toISOString()
+                });
+            });
+            
+            console.log(`🧹 Auto-cleanup completed: Removed ${keysToDelete.length} stale calls`);
+        }
+    }, 60000); // Check every minute
+    
+    console.log('🕒 Started call cleanup timer (checks every 60s, removes calls older than 10min)');
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
