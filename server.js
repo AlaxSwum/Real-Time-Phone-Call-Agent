@@ -27,7 +27,7 @@ if (ASSEMBLYAI_API_KEY) {
     console.log('🔧 Initializing AssemblyAI client...');
     assemblyai = new AssemblyAI({ apiKey: ASSEMBLYAI_API_KEY });
     console.log('✅ AssemblyAI client initialized');
-} else {
+    } else {
     console.log('⚠️ AssemblyAI API key not configured - single service mode');
 }
 
@@ -278,7 +278,7 @@ function handleMultiServiceStream(ws, req) {
         try {
             console.log('🎙️ Setting up AssemblyAI real-time connection...');
             // Note: AssemblyAI real-time requires different setup, we'll use it for post-processing
-        } catch (error) {
+            } catch (error) {
             console.log('⚠️ AssemblyAI real-time not available, using Deepgram only');
         }
     }
@@ -418,14 +418,14 @@ function fuseTranscripts(deepgramResult, assemblyaiResult) {
     
     // Use the result with higher confidence, but combine punctuation intelligently
     if (deepgramConfidence > assemblyaiConfidence) {
-        return {
+    return {
             text: deepgramResult.text,
             confidence: Math.min(0.98, (deepgramConfidence + assemblyaiConfidence) / 2),
             source: 'fused_deepgram_primary',
             services_used: ['deepgram', 'assemblyai']
         };
     } else {
-        return {
+    return {
             text: assemblyaiResult.text,
             confidence: Math.min(0.98, (deepgramConfidence + assemblyaiConfidence) / 2),
             source: 'fused_assemblyai_primary',
@@ -678,7 +678,7 @@ function broadcastTranscript(data) {
             try {
                 client.send(JSON.stringify(data));
                 successCount++;
-            } catch (error) {
+        } catch (error) {
                 console.error('Broadcast error:', error);
                 errorCount++;
                 // Remove dead clients
@@ -724,7 +724,7 @@ function processTranscript(text, conferenceId) {
                 text: text,
                 intent: intent,
                 email: email,
-                timestamp: new Date().toISOString()
+                                timestamp: new Date().toISOString()
             });
         }
     }
@@ -775,7 +775,7 @@ app.post('/conference-events', (req, res) => {
                     console.log(`🎯 CONFERENCE READY: Both participants should be able to hear each other!`);
                 }
             }
-            break;
+                    break;
         case 'participant-leave':
             console.log(`👋 Participant left: ${CallSid}`);
             break;
@@ -832,7 +832,7 @@ app.post('/call-status', (req, res) => {
         console.log('🔊 Broadcasting call end to dashboard:', endMessage);
         broadcastTranscript(endMessage);
         
-    } else {
+                            } else {
         // Broadcast call status to WebSocket clients
         const statusMessage = {
             type: 'call_status',
@@ -852,7 +852,7 @@ app.post('/call-status', (req, res) => {
     switch (CallStatus) {
         case 'ringing':
             console.log(`📞 Auto-dial ringing: ${CallSid}`);
-            break;
+                    break;
         case 'answered':
             console.log(`✅ Auto-dial answered: ${CallSid}`);
             break;
@@ -1011,7 +1011,7 @@ app.post('/force-check-recordings', async (req, res) => {
                 callSid: recording.callSid,
                 recordingSid: recording.sid,
                 message: 'Force processing recording...',
-                timestamp: new Date().toISOString()
+                            timestamp: new Date().toISOString()
             });
             
             // Process the recording
@@ -1025,7 +1025,7 @@ app.post('/force-check-recordings', async (req, res) => {
             recordingsFound: recordings.length
         });
         
-    } catch (error) {
+        } catch (error) {
         console.error('❌ Force check recordings error:', error);
         res.status(500).json({
             success: false,
@@ -1521,8 +1521,8 @@ async function dialParticipantMinimal(conferenceId, participantNumber, req) {
         });
         
         console.log(`🏁 MINIMAL: Call created ${call.sid}`);
-        
-    } catch (error) {
+            
+        } catch (error) {
         console.error('🏁 MINIMAL: Error:', error);
     }
 }
@@ -1620,7 +1620,7 @@ app.post('/participant-codec', (req, res) => {
         </Conference>
     </Dial>
 </Response>`;
-    
+        
     res.type('text/xml').send(twiml);
 });
 
@@ -1645,7 +1645,7 @@ app.post('/webhook-carrier', (req, res) => {
         </Conference>
     </Dial>
 </Response>`;
-    
+        
     console.log(`📡 CARRIER: Conference created: ${conferenceId}`);
     res.type('text/xml').send(twiml);
     
@@ -1979,7 +1979,7 @@ function startCallCleanupTimer() {
                     callSid: call.callSid,
                     status: 'cleanup',
                     message: 'Call auto-cleaned due to age',
-                    timestamp: new Date().toISOString()
+                                    timestamp: new Date().toISOString()
                 });
             });
             
@@ -2020,11 +2020,11 @@ async function checkAndProcessRecording(callSid, callInfo) {
             // Broadcast that we found the recording
             broadcastTranscript({
                 type: 'call_ended',
-                callSid: callSid,
+            callSid: callSid,
                 recordingSid: recording.sid,
                 duration: recording.duration,
                 message: 'Recording found - Processing transcription...',
-                timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString()
             });
             
             // Process the recording
@@ -2084,7 +2084,7 @@ function handleDashboard(ws) {
             if (data.type === 'ping') {
                 ws.send(JSON.stringify({
                     type: 'pong',
-                    timestamp: new Date().toISOString()
+                        timestamp: new Date().toISOString()
                 }));
             }
         } catch (error) {
@@ -2153,12 +2153,12 @@ async function processRecording(recordingUrl, callSid, recordingSid) {
         // Store and broadcast the transcript
         const transcriptData = {
             type: 'final_transcript',
-            callSid: callSid,
+                    callSid: callSid,
             recordingSid: recordingSid,
             text: transcript,
             confidence: confidence,
             accuracy_type: 'single_service_fallback',
-            timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString()
         };
         
         broadcastTranscript(transcriptData);
