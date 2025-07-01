@@ -491,6 +491,7 @@
                     <button class="btn" onclick="testAPI()">Test API Health</button>
                     <button class="btn" onclick="testDeepgram()">Test Deepgram</button>
                     <button class="btn" onclick="showTestModal()">Test AI Processing</button>
+                    <button class="btn" onclick="testRecording()" style="background: #28a745; color: white;">Test Recording Process</button>
                     <button class="btn btn-secondary" onclick="clearCallStatus()" style="background: #dc3545; color: white;">Clear Call Status</button>
                 </div>
             </div>
@@ -584,6 +585,18 @@
             } catch (error) {
                 log(`Deepgram test error: ${error.message}`);
                 updateStatus('deepgram-status', 'offline');
+            }
+        }
+        
+        // Test recording processing
+        async function testRecording() {
+            log('Testing recording processing...');
+            try {
+                const response = await fetch('/test-recording');
+                const data = await response.json();
+                log(`Recording test initiated: ${data.message}`);
+            } catch (error) {
+                log(`Recording test failed: ${error.message}`);
             }
         }
         

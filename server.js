@@ -914,6 +914,40 @@ app.post('/cleanup-calls', (req, res) => {
     });
 });
 
+// Debug endpoint to test recording webhook
+app.get('/test-recording', (req, res) => {
+    console.log('🧪 Testing recording processing with dummy data...');
+    
+    const testRecordingUrl = 'https://api.twilio.com/2010-04-01/Accounts/ACXXXXXX/Recordings/REXXXXXX';
+    const testCallSid = 'CAtest123456789';
+    const testRecordingSid = 'REtest123456789';
+    
+    // Simulate recording completion
+    processRecordingMultiService(testRecordingUrl, testCallSid, testRecordingSid);
+    
+    res.json({
+        message: 'Test recording processing initiated',
+        testCallSid: testCallSid,
+        testRecordingSid: testRecordingSid
+    });
+});
+
+// Catch-all webhook logger
+app.use('/webhook*', (req, res, next) => {
+    console.log(`🔍 WEBHOOK DEBUG: ${req.method} ${req.path}`);
+    console.log(`🔍 Headers:`, req.headers);
+    console.log(`🔍 Body:`, req.body);
+    next();
+});
+
+app.use('*', (req, res, next) => {
+    if (req.path.includes('recording') || req.path.includes('webhook')) {
+        console.log(`🔍 UNHANDLED WEBHOOK: ${req.method} ${req.path}`);
+        console.log(`🔍 Body:`, req.body);
+    }
+    next();
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({
@@ -1736,11 +1770,22 @@ app.post('/participant-record', (req, res) => {
 
 // Handle recording completion
 app.post('/recording-complete', (req, res) => {
-    const { CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
+    console.log('📞 RECORDING WEBHOOK CALLED!');
+    console.log('📞 Headers:', req.headers);
+    console.log('📞 Body:', JSON.stringify(req.body, null, 2));
+    
+    const { CallSid, RecordingUrl, RecordingSid, RecordingDuration, RecordingStatus } = req.body;
+    
+    if (!CallSid || !RecordingUrl) {
+        console.error('❌ Missing required recording data:', { CallSid, RecordingUrl, RecordingSid });
+        return res.sendStatus(400);
+    }
     
     console.log(`🎬 Recording completed for ${CallSid}`);
     console.log(`📼 Recording URL: ${RecordingUrl}`);
+    console.log(`📼 Recording SID: ${RecordingSid}`);
     console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
+    console.log(`📊 Status: ${RecordingStatus}`);
     
     // Clean up active conferences for this call
     activeConferences.delete(CallSid);
@@ -1766,9 +1811,22 @@ app.post('/recording-complete', (req, res) => {
     console.log('🔊 Broadcasting recording completion:', completionMessage);
     broadcastTranscript(completionMessage);
     
-    // Process the recording for transcription
-    console.log(`🎯 Starting multi-service transcription for ${RecordingSid}`);
-    processRecordingMultiService(RecordingUrl, CallSid, RecordingSid);
+    // Only process if recording is completed successfully
+    if (RecordingStatus === 'completed' && RecordingUrl) {
+        console.log(`🎯 Starting multi-service transcription for ${RecordingSid}`);
+        processRecordingMultiService(RecordingUrl, CallSid, RecordingSid);
+    } else {
+        console.log(`⚠️ Recording not ready for processing: ${RecordingStatus}`);
+        
+        // Broadcast error
+        broadcastTranscript({
+            type: 'transcription_error',
+            callSid: CallSid,
+            recordingSid: RecordingSid,
+            message: `Recording ${RecordingStatus} - cannot process transcription`,
+            timestamp: new Date().toISOString()
+        });
+    }
     
     res.sendStatus(200);
 });
@@ -2079,15 +2137,22 @@ app.post('/webhook-hybrid-enhanced', (req, res) => {
         timestamp: new Date().toISOString()
     });
     
+    // Force HTTPS for recording callback
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const host = req.get('host');
+    const recordingCallback = `${protocol}://${host}/recording-complete`;
+    
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial record="record-from-start" 
-          recordingStatusCallback="https://real-time-phone-call-agent-production.up.railway.app/recording-complete"
+          recordingStatusCallback="${recordingCallback}"
+          recordingStatusCallbackEvent="completed"
           timeout="30">
         <Number>+447494225623</Number>
     </Dial>
 </Response>`;
     
+    console.log(`🔥 HYBRID ENHANCED: Recording callback URL: ${recordingCallback}`);
     console.log(`🔥 HYBRID ENHANCED: Direct bridge + Multi-service recording for ${CallSid}`);
     res.type('text/xml').send(twiml);
 });
