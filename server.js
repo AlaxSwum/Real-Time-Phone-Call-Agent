@@ -772,7 +772,7 @@ app.post('/webhook-debug', (req, res) => {
         <Conference 
             statusCallback="${protocol}://${host}/conference-events"
             statusCallbackEvent="start,end,join,leave"
-            startConferenceOnEnter="false"
+            startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="true"
             muted="false"
@@ -835,7 +835,7 @@ app.post('/participant-debug', (req, res) => {
     <Say voice="alice">Debug participant joining. Listen for beep.</Say>
     <Dial>
         <Conference 
-            startConferenceOnEnter="false"
+            startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="true"
             muted="false"
