@@ -1107,6 +1107,108 @@ app.post('/participant-codec', (req, res) => {
 });
 
 // ============================================================================
+// Carrier compatibility test - force different settings
+app.post('/webhook-carrier', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`📡 CARRIER test - Incoming call: ${From} → ${To} (${CallSid})`);
+    console.log(`📡 CARRIER: Testing ${From} and +447494225623 compatibility`);
+    
+    const conferenceId = `carrier-${CallSid}`;
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Carrier compatibility test. Testing audio between your networks.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            beep="true"
+            waitUrl="">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`📡 CARRIER: Conference created: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+    
+    // Auto-dial with longer delay to avoid carrier conflicts
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            dialParticipantCarrier(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 5000); // 5-second delay
+    }
+});
+
+// Carrier auto-dial with explicit codec settings
+async function dialParticipantCarrier(conferenceId, participantNumber, req) {
+    if (!twilioClient) return;
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant-carrier?conference=${conferenceId}`;
+        
+        console.log(`📡 CARRIER: Auto-dialing ${participantNumber} with 5s delay`);
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST',
+            // Force specific settings that might help carrier compatibility
+            sendDigits: 'w',  // Wait before proceeding
+            timeout: 60       // Longer timeout
+        });
+        
+        console.log(`📡 CARRIER: Call created ${call.sid}`);
+        
+    } catch (error) {
+        console.error('📡 CARRIER: Error:', error);
+    }
+}
+
+// Carrier participant endpoint with beep confirmation
+app.post('/participant-carrier', (req, res) => {
+    const conferenceId = req.query.conference;
+    
+    console.log(`📡 CARRIER: Participant joining ${conferenceId}`);
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Second participant joining carrier test. Listen for beep.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            beep="true"
+            waitUrl="">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    res.type('text/xml').send(twiml);
+});
+
+// Emergency fallback - Manual bridge test
+app.post('/webhook-emergency', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🚨 EMERGENCY bridge test: ${From} → ${To} (${CallSid})`);
+    
+    // Direct bridge - no conference, just connect the calls
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Emergency bridge test. Connecting you directly.</Say>
+    <Dial timeout="30">
+        <Number>+447494225623</Number>
+    </Dial>
+    <Say voice="alice">Bridge test complete.</Say>
+</Response>`;
+    
+    console.log(`🚨 EMERGENCY: Direct bridge initiated`);
+    res.type('text/xml').send(twiml);
+});
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
