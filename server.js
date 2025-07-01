@@ -958,6 +958,155 @@ app.post('/participant-alt', (req, res) => {
 });
 
 // ============================================================================
+// Ultra-minimal conference test (no extra settings)
+app.post('/webhook-minimal', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🏁 MINIMAL webhook - Incoming call: ${From} → ${To} (${CallSid})`);
+    
+    const conferenceId = `minimal-${CallSid}`;
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Minimal conference test.</Say>
+    <Dial>
+        <Conference>${conferenceId}</Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🏁 MINIMAL: Conference created: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+    
+    // Auto-dial participant
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            dialParticipantMinimal(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 2000);
+    }
+});
+
+// Minimal auto-dial
+async function dialParticipantMinimal(conferenceId, participantNumber, req) {
+    if (!twilioClient) return;
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant-minimal?conference=${conferenceId}`;
+        
+        console.log(`🏁 MINIMAL: Auto-dialing ${participantNumber}`);
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST'
+        });
+        
+        console.log(`🏁 MINIMAL: Call created ${call.sid}`);
+        
+    } catch (error) {
+        console.error('🏁 MINIMAL: Error:', error);
+    }
+}
+
+// Minimal participant endpoint
+app.post('/participant-minimal', (req, res) => {
+    const conferenceId = req.query.conference;
+    
+    console.log(`🏁 MINIMAL: Participant joining ${conferenceId}`);
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Joining minimal conference.</Say>
+    <Dial>
+        <Conference>${conferenceId}</Conference>
+    </Dial>
+</Response>`;
+    
+    res.type('text/xml').send(twiml);
+});
+
+// Force codec test
+app.post('/webhook-codec', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🔊 CODEC test - Incoming call: ${From} → ${To} (${CallSid})`);
+    
+    const conferenceId = `codec-${CallSid}`;
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Codec compatibility test.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            region="ireland"
+            record="false">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🔊 CODEC: Conference created: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+    
+    // Auto-dial participant
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            dialParticipantCodec(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 3000); // Longer delay
+    }
+});
+
+// Codec auto-dial
+async function dialParticipantCodec(conferenceId, participantNumber, req) {
+    if (!twilioClient) return;
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant-codec?conference=${conferenceId}`;
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST'
+        });
+        
+        console.log(`🔊 CODEC: Call created ${call.sid}`);
+        
+    } catch (error) {
+        console.error('🔊 CODEC: Error:', error);
+    }
+}
+
+// Codec participant endpoint
+app.post('/participant-codec', (req, res) => {
+    const conferenceId = req.query.conference;
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Joining codec test conference.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            region="ireland"
+            record="false">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    res.type('text/xml').send(twiml);
+});
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
