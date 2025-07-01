@@ -72,9 +72,6 @@ app.post('/webhook', (req, res) => {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Welcome! Connecting you to the conference.</Say>
-    <Start>
-        <Stream url="${streamUrl}" track="inbound_track" />
-    </Start>
     <Dial>
         <Conference 
             statusCallback="${protocol}://${host}/conference-events"
@@ -136,7 +133,8 @@ app.post('/participant', (req, res) => {
             endConferenceOnExit="false"
             waitUrl=""
             beep="false"
-            muted="false">
+            muted="false"
+            maxParticipants="10">
             ${conferenceId}
         </Conference>
     </Dial>
@@ -224,7 +222,7 @@ wss.on('connection', (ws, req) => {
     
     if (url.pathname === '/deepgram') {
         handleDeepgramStream(ws, req);
-    } else {
+            } else {
         handleDashboard(ws);
     }
 });
@@ -379,10 +377,10 @@ function broadcastTranscript(data) {
             } catch (error) {
                 console.error('Broadcast error:', error);
             }
-        }
-    });
-}
-
+                            }
+                        });
+    }
+    
 // Simple intent detection
 function processTranscript(text, conferenceId) {
     console.log(`🧠 Processing transcript: "${text}"`);
@@ -413,7 +411,7 @@ function processTranscript(text, conferenceId) {
                 text: text,
                 intent: intent,
                 email: email,
-                timestamp: new Date().toISOString()
+                            timestamp: new Date().toISOString()
             });
         }
     }
@@ -423,12 +421,12 @@ function processTranscript(text, conferenceId) {
 async function sendToWebhook(data) {
     try {
         await fetch(process.env.WEBHOOK_URL, {
-            method: 'POST',
+                                        method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         console.log('✅ Data sent to webhook');
-    } catch (error) {
+                                } catch (error) {
         console.error('❌ Webhook error:', error);
     }
 }
@@ -453,6 +451,17 @@ app.post('/conference-events', (req, res) => {
             break;
         case 'participant-join':
             console.log(`👋 Participant joined: ${CallSid} (Muted: ${Muted}, Hold: ${Hold})`);
+            
+            // Log conference status
+            const confKey = Array.from(activeConferences.keys()).find(key => key.includes(ConferenceSid.replace('CF', 'CA')));
+            if (confKey) {
+                const conf = activeConferences.get(confKey);
+                console.log(`📊 Conference ${confKey} now has ${conf.participants} participants`);
+                
+                if (conf.participants >= 2) {
+                    console.log(`🎯 CONFERENCE READY: Both participants should be able to hear each other!`);
+                }
+            }
             break;
         case 'participant-leave':
             console.log(`👋 Participant left: ${CallSid}`);
@@ -470,7 +479,7 @@ app.post('/call-status', (req, res) => {
     switch (CallStatus) {
         case 'ringing':
             console.log(`📞 Auto-dial ringing: ${CallSid}`);
-            break;
+                    break;
         case 'answered':
             console.log(`✅ Auto-dial answered: ${CallSid}`);
             break;
@@ -504,7 +513,7 @@ app.get('/health', (req, res) => {
 
 // Status endpoint
 app.get('/status', (req, res) => {
-    res.json({
+        res.json({
         server: 'Real-Time Conference Transcription',
         version: '3.0-deepgram',
         architecture: 'Conference + Deepgram Streaming',
@@ -516,8 +525,8 @@ app.get('/status', (req, res) => {
             participant_number: !!PARTICIPANT_NUMBER,
             auto_dial_enabled: !!(twilioClient && PARTICIPANT_NUMBER)
         },
-        timestamp: new Date().toISOString()
-    });
+            timestamp: new Date().toISOString()
+        });
 });
 
 // Root endpoint
@@ -560,7 +569,7 @@ app.get('/test/transcription-priority', (req, res) => {
         recommendation: DEEPGRAM_API_KEY ? 
             'Deepgram nova-2 will be used for real-time transcription' : 
             'Configure DEEPGRAM_API_KEY for real-time transcription',
-        timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString()
     });
 });
 
@@ -608,7 +617,7 @@ app.get('/test/participant', (req, res) => {
         </Conference>
     </Dial>
 </Response>`;
-    
+        
     console.log(`🧪 Test participant endpoint called with conference: ${conferenceId}`);
     res.type('text/xml').send(twiml);
 });
@@ -633,6 +642,26 @@ app.post('/test/conference-audio', (req, res) => {
 </Response>`;
     
     console.log(`🎵 Audio test for conference: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+});
+
+// Simple audio test endpoint
+app.get('/test/simple-conference', (req, res) => {
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">You are joining a simple test conference. Speak to test your audio.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            waitUrl="">
+            simple-test-conference
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🧪 Simple conference test accessed`);
     res.type('text/xml').send(twiml);
 });
 
