@@ -850,6 +850,114 @@ app.post('/participant-debug', (req, res) => {
 });
 
 // ============================================================================
+// ALTERNATIVE CONFERENCE APPROACH
+// ============================================================================
+
+// Alternative conference approach with different settings
+app.post('/webhook-alt', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    console.log(`🔄 Alternative conference - Incoming call: ${From} → ${To} (${CallSid})`);
+    
+    const conferenceId = `alt-conf-${CallSid}`;
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const host = req.get('host');
+    
+    // Store conference info
+    activeConferences.set(conferenceId, {
+        callSid: CallSid,
+        caller: From,
+        startTime: new Date(),
+        participants: 1,
+        alternative: true
+    });
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Alternative conference setup. Please wait for the other participant.</Say>
+    <Dial>
+        <Conference 
+            statusCallback="${protocol}://${host}/conference-events"
+            statusCallbackEvent="start,end,join,leave"
+            startConferenceOnEnter="true"
+            endConferenceOnExit="true"
+            beep="true"
+            muted="false"
+            hold="false"
+            region="dublin"
+            record="do-not-record">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🔄 Alternative conference created: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+    
+    // Auto-dial participant if configured
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            dialParticipantAlt(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 2000);
+    }
+});
+
+// Alternative auto-dial function
+async function dialParticipantAlt(conferenceId, participantNumber, req) {
+    if (!twilioClient) {
+        console.log('🔄 ALT: No Twilio client available');
+        return;
+    }
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant-alt?conference=${conferenceId}`;
+        
+        console.log(`🔄 ALT: Auto-dialing ${participantNumber} to ${participantUrl}`);
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST'
+        });
+        
+        console.log(`🔄 ALT: Call created ${call.sid}`);
+        
+    } catch (error) {
+        console.error('🔄 ALT: Auto-dial error:', error);
+    }
+}
+
+// Alternative participant endpoint
+app.post('/participant-alt', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    const conferenceId = req.query.conference;
+    
+    console.log(`🔄 ALT: Participant joining conference ${conferenceId}`);
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Joining alternative conference now.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="true"
+            beep="true"
+            muted="false"
+            hold="false"
+            region="dublin"
+            record="do-not-record">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🔄 ALT: Participant TwiML sent`);
+    res.type('text/xml').send(twiml);
+});
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
