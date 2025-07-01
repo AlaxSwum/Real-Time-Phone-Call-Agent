@@ -99,27 +99,62 @@ app.post('/webhook', (req, res) => {
 
 // 2. /participant - Handle second participant joining
 app.post('/participant', (req, res) => {
-    const { CallSid, From } = req.body;
-    const conferenceId = req.query.conference || `conf-${CallSid}`;
-    
-    console.log(`👥 Participant joining: ${From} → ${conferenceId}`);
-    
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    try {
+        const { CallSid, From, To } = req.body;
+        const conferenceId = req.query.conference || `conf-${CallSid}`;
+        
+        console.log(`👥 Participant joining: ${From} → ${conferenceId}`);
+        console.log(`🔍 Request details:`, {
+            CallSid,
+            From,
+            To,
+            query: req.query,
+            conferenceId
+        });
+        
+        // Validate conference exists
+        if (!activeConferences.has(conferenceId)) {
+            console.log(`⚠️ Conference not found: ${conferenceId}`);
+            console.log(`📋 Active conferences:`, Array.from(activeConferences.keys()));
+        }
+        
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Joining the conference now.</Say>
     <Dial>
-        <Conference>${conferenceId}</Conference>
+        <Conference 
+            statusCallback="${req.protocol}://${req.get('host')}/conference-events"
+            statusCallbackEvent="start,end,join,leave">
+            ${conferenceId}
+        </Conference>
     </Dial>
 </Response>`;
-    
-    // Update conference info
-    if (activeConferences.has(conferenceId)) {
-        const conf = activeConferences.get(conferenceId);
-        conf.participants++;
-        activeConferences.set(conferenceId, conf);
+        
+        console.log(`📜 Participant TwiML:`, twiml);
+        
+        // Update conference info
+        if (activeConferences.has(conferenceId)) {
+            const conf = activeConferences.get(conferenceId);
+            conf.participants++;
+            activeConferences.set(conferenceId, conf);
+            console.log(`📊 Conference updated: ${conf.participants} participants`);
+        }
+        
+        res.type('text/xml').send(twiml);
+        console.log(`✅ Participant TwiML sent successfully`);
+        
+    } catch (error) {
+        console.error(`❌ Participant endpoint error:`, error);
+        
+        // Send error response TwiML
+        const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Sorry, there was an error joining the conference. Please try again.</Say>
+    <Hangup/>
+</Response>`;
+        
+        res.type('text/xml').send(errorTwiml);
     }
-    
-    res.type('text/xml').send(twiml);
 });
 
 // Auto-dial function
@@ -135,6 +170,7 @@ async function dialParticipant(conferenceId, participantNumber, req) {
         const participantUrl = `${protocol}://${host}/participant?conference=${conferenceId}`;
         
         console.log(`📱 Auto-dialing participant: ${participantNumber} → ${conferenceId}`);
+        console.log(`🔗 Participant URL: ${participantUrl}`);
         
         // Make actual Twilio call
         const call = await twilioClient.calls.create({
@@ -519,6 +555,26 @@ app.post('/test/ai-processing', (req, res) => {
             timestamp: new Date().toISOString()
         });
     }, 1000);
+});
+
+// Test participant endpoint
+app.get('/test/participant', (req, res) => {
+    const conferenceId = req.query.conference || 'test-conference-123';
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">This is a test of the participant endpoint. Conference ID is ${conferenceId}.</Say>
+    <Dial>
+        <Conference 
+            statusCallback="${req.protocol}://${req.get('host')}/conference-events"
+            statusCallbackEvent="start,end,join,leave">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🧪 Test participant endpoint called with conference: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
 });
 
 // ============================================================================
