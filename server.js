@@ -81,7 +81,7 @@ app.post('/webhook', (req, res) => {
             endConferenceOnExit="false"
             waitUrl=""
             beep="false"
-            region="dublin"
+            region="ireland"
             maxParticipants="10">
             ${conferenceId}
         </Conference>
@@ -135,7 +135,7 @@ app.post('/participant', (req, res) => {
             waitUrl=""
             beep="false"
             muted="false"
-            region="dublin"
+            region="ireland"
             maxParticipants="10">
             ${conferenceId}
         </Conference>
@@ -657,7 +657,7 @@ app.get('/test/simple-conference', (req, res) => {
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="false"
-            region="dublin"
+            region="ireland"
             waitUrl="">
             simple-test-conference
         </Conference>
@@ -680,7 +680,7 @@ app.get('/test/debug-audio/:conferenceId?', (req, res) => {
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             beep="true"
-            region="dublin"
+            region="ireland"
             waitUrl="">
             ${conferenceId}
         </Conference>
