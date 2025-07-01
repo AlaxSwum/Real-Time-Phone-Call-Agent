@@ -56,7 +56,8 @@ app.post('/webhook', (req, res) => {
     console.log(`📞 Incoming call: ${From} → ${To} (${CallSid})`);
     
     const conferenceId = `conf-${CallSid}`;
-    const protocol = req.secure ? 'https' : 'http';
+    // Railway always uses HTTPS, force it for production
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : (req.secure ? 'https' : 'http');
     const host = req.get('host');
     const streamUrl = `${protocol === 'https' ? 'wss' : 'ws'}://${host}/deepgram?conference=${conferenceId}`;
     
@@ -118,12 +119,15 @@ app.post('/participant', (req, res) => {
             console.log(`📋 Active conferences:`, Array.from(activeConferences.keys()));
         }
         
+        // Railway always uses HTTPS, force it for production  
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : (req.secure ? 'https' : 'http');
+        
         const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Joining the conference now.</Say>
     <Dial>
         <Conference 
-            statusCallback="${req.protocol}://${req.get('host')}/conference-events"
+            statusCallback="${protocol}://${req.get('host')}/conference-events"
             statusCallbackEvent="start,end,join,leave">
             ${conferenceId}
         </Conference>
@@ -165,7 +169,8 @@ async function dialParticipant(conferenceId, participantNumber, req) {
     }
     
     try {
-        const protocol = req.secure ? 'https' : 'http';
+        // Railway always uses HTTPS, force it for production
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : (req.secure ? 'https' : 'http');
         const host = req.get('host');
         const participantUrl = `${protocol}://${host}/participant?conference=${conferenceId}`;
         
@@ -561,12 +566,15 @@ app.post('/test/ai-processing', (req, res) => {
 app.get('/test/participant', (req, res) => {
     const conferenceId = req.query.conference || 'test-conference-123';
     
+    // Railway always uses HTTPS, force it for production
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : (req.secure ? 'https' : 'http');
+    
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">This is a test of the participant endpoint. Conference ID is ${conferenceId}.</Say>
     <Dial>
         <Conference 
-            statusCallback="${req.protocol}://${req.get('host')}/conference-events"
+            statusCallback="${protocol}://${req.get('host')}/conference-events"
             statusCallbackEvent="start,end,join,leave">
             ${conferenceId}
         </Conference>
