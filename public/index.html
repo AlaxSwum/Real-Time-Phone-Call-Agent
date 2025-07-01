@@ -212,6 +212,39 @@
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
         
+        .transcript-item.enhanced {
+            border-left-color: #28a745;
+            background: #f8fff8;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .transcript-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.75rem;
+            color: #666;
+        }
+        
+        .transcript-time {
+            font-weight: bold;
+        }
+        
+        .transcript-confidence {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .transcript-services {
+            background: #007aff;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            font-weight: 500;
+        }
+        
         .transcript-text {
             color: #1a1a1a;
             font-size: 1rem;
@@ -610,7 +643,7 @@
         function handleWebSocketMessage(data) {
             // Only log if data and type exist
             if (data && data.type) {
-                log(`${data.type}: ${data.message || ''}`);
+                console.log('WebSocket message:', data);
                 
                 switch (data.type) {
                     case 'welcome':
@@ -619,19 +652,41 @@
                         if (data.activeConferences !== undefined) {
                             log(`Active conferences: ${data.activeConferences}`);
                         }
+                        if (data.activeCalls && data.activeCalls.length > 0) {
+                            data.activeCalls.forEach(call => {
+                                handleCallStarted(call);
+                            });
+                        }
                         break;
                     case 'call_started':
-                        handleCallStarted(data.data);
+                        handleCallStarted(data);
+                        break;
+                    case 'call_status':
+                        handleCallStatus(data);
+                        break;
+                    case 'call_ended':
+                        handleCallEnded(data);
+                        break;
+                    case 'transcription_processing':
+                        handleTranscriptionProcessing(data);
                         break;
                     case 'live_transcript':
                     case 'transcript':
-                        handleLiveTranscript(data.data || data);
+                        handleLiveTranscript(data);
+                        break;
+                    case 'final_transcript_multiservice':
+                    case 'final_transcript':
+                        handleFinalTranscript(data);
+                        break;
+                    case 'transcription_error':
+                        handleTranscriptionError(data);
                         break;
                     case 'stream_ended':
-                        handleCallEnded(data.data);
+                        handleCallEnded(data);
                         break;
                     case 'pong':
-                        // Ignore pong messages
+                        // Ignore pong messages but log for debugging
+                        console.log('Received pong from server');
                         break;
                     default:
                         log(`Unknown message type: ${data.type}`);
@@ -644,14 +699,63 @@
             statusEl.className = 'call-status active';
             statusEl.innerHTML = `
                 <p><strong>Live Call Active</strong></p>
-                <p>From: ${callData.from || 'Unknown'}</p>
+                <p>From: ${callData.caller || callData.from || 'Unknown'}</p>
                 <p>Call ID: ${callData.callSid}</p>
+                <p>Mode: ${callData.mode || 'standard'}</p>
+                ${callData.duration ? `<p>Duration: ${callData.duration}s</p>` : ''}
             `;
             
             const transcriptEl = document.getElementById('transcript-area');
             transcriptEl.innerHTML = '<p style="text-align: center; color: #666;">Listening for speech...</p>';
             
-            log(`Call started from ${callData.from}`);
+            log(`Call started from ${callData.caller || callData.from} (${callData.mode || 'standard'} mode)`);
+        }
+        
+        function handleCallStatus(statusData) {
+            log(`Call ${statusData.status}: ${statusData.callSid} (${statusData.from} → ${statusData.to})`);
+        }
+        
+        function handleTranscriptionProcessing(data) {
+            const transcriptEl = document.getElementById('transcript-area');
+            transcriptEl.innerHTML = `
+                <div style="text-align: center; color: #666;">
+                    <p>🎯 Processing transcription...</p>
+                    <p>${data.message || 'Processing with AI services...'}</p>
+                </div>
+            `;
+            log(`Transcription processing: ${data.message}`);
+        }
+        
+        function handleFinalTranscript(data) {
+            const transcriptEl = document.getElementById('transcript-area');
+            const timestamp = new Date(data.timestamp).toLocaleTimeString();
+            
+            const transcriptItem = document.createElement('div');
+            transcriptItem.className = 'transcript-item final enhanced';
+            transcriptItem.innerHTML = `
+                <div class="transcript-header">
+                    <span class="transcript-time">${timestamp}</span>
+                    <span class="transcript-confidence">${Math.round(data.confidence * 100)}% confidence</span>
+                    ${data.services_used ? `<span class="transcript-services">${data.services_used.join(', ')}</span>` : ''}
+                </div>
+                <div class="transcript-text"><strong>Final:</strong> ${data.text}</div>
+            `;
+            
+            transcriptEl.appendChild(transcriptItem);
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
+            
+            log(`Enhanced transcript (${Math.round(data.confidence * 100)}%): "${data.text}"`);
+        }
+        
+        function handleTranscriptionError(data) {
+            const transcriptEl = document.getElementById('transcript-area');
+            transcriptEl.innerHTML = `
+                <div style="text-align: center; color: #e74c3c;">
+                    <p>❌ Transcription Error</p>
+                    <p>${data.message || 'Failed to process audio'}</p>
+                </div>
+            `;
+            log(`Transcription error: ${data.message}`);
         }
         
         function handleLiveTranscript(transcriptData) {
@@ -691,10 +795,11 @@
             const statusEl = document.getElementById('call-status');
             statusEl.className = 'call-status';
             statusEl.innerHTML = `
-                <p>Call ended</p>
+                <p>Call ended - ${callData.status || 'completed'}</p>
                 <p>Call +441733964789 to start new session</p>
+                ${callData.duration ? `<p>Duration: ${callData.duration} seconds</p>` : ''}
             `;
-            log(`Call ended for ${callData.callSid}`);
+            log(`Call ended: ${callData.callSid} - ${callData.status || 'completed'}`);
         }
         
         // Modal Functions

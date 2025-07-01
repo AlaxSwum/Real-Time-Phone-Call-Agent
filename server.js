@@ -1680,15 +1680,46 @@ function handleDashboard(ws) {
     console.log('📊 Dashboard client connected');
     transcriptClients.add(ws);
     
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            if (data.type === 'ping') {
+                ws.send(JSON.stringify({
+                    type: 'pong',
+                    timestamp: new Date().toISOString()
+                }));
+            }
+        } catch (error) {
+            console.error('Dashboard message error:', error);
+        }
+    });
+    
     ws.on('close', () => {
+        console.log('📊 Dashboard client disconnected');
         transcriptClients.delete(ws);
     });
     
-    // Send welcome message
+    ws.on('error', (error) => {
+        console.error('📊 Dashboard WebSocket error:', error);
+        transcriptClients.delete(ws);
+    });
+    
+    // Send welcome message with current system status
+    const activeCalls = Array.from(activeConferences.values()).map(call => ({
+        callSid: call.callSid,
+        caller: call.caller,
+        mode: call.mode,
+        startTime: call.startTime,
+        duration: Math.floor((new Date() - call.startTime) / 1000)
+    }));
+    
     ws.send(JSON.stringify({
         type: 'welcome',
         message: 'Connected to real-time transcription dashboard',
-        activeConferences: activeConferences.size
+        activeConferences: activeConferences.size,
+        activeCalls: activeCalls,
+        multiServiceActive: !!assemblyai,
+        timestamp: new Date().toISOString()
     }));
 }
 
