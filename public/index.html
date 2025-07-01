@@ -492,6 +492,7 @@
                     <button class="btn" onclick="testDeepgram()">Test Deepgram</button>
                     <button class="btn" onclick="showTestModal()">Test AI Processing</button>
                     <button class="btn" onclick="testRecording()" style="background: #28a745; color: white;">Test Recording Process</button>
+                    <button class="btn" onclick="forceCheckRecordings()" style="background: #ff9500; color: white;">Force Check Recordings</button>
                     <button class="btn btn-secondary" onclick="clearCallStatus()" style="background: #dc3545; color: white;">Clear Call Status</button>
                 </div>
             </div>
@@ -597,6 +598,21 @@
                 log(`Recording test initiated: ${data.message}`);
             } catch (error) {
                 log(`Recording test failed: ${error.message}`);
+            }
+        }
+        
+        // Force check for recordings
+        async function forceCheckRecordings() {
+            log('Force checking for recordings...');
+            try {
+                const response = await fetch('/force-check-recordings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                log(`Recording check result: ${data.message}`);
+            } catch (error) {
+                log(`Recording check failed: ${error.message}`);
             }
         }
         

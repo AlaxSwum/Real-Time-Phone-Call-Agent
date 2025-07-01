@@ -544,7 +544,26 @@ async function processRecordingMultiService(recordingUrl, callSid, recordingSid)
 async function processWithDeepgram(recordingUrl) {
     try {
         console.log('🔵 Deepgram: Downloading audio from:', recordingUrl);
-        const response = await fetch(recordingUrl);
+        
+        // Prepare fetch options with Twilio authentication if needed
+        const fetchOptions = {
+            method: 'GET',
+            headers: {}
+        };
+        
+        // If this is a Twilio recording URL, add authentication
+        if (recordingUrl.includes('api.twilio.com') && twilioClient) {
+            const accountSid = process.env.TWILIO_ACCOUNT_SID;
+            const authToken = process.env.TWILIO_AUTH_TOKEN;
+            
+            if (accountSid && authToken) {
+                const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+                fetchOptions.headers['Authorization'] = `Basic ${credentials}`;
+                console.log('🔵 Deepgram: Using Twilio authentication');
+            }
+        }
+        
+        const response = await fetch(recordingUrl, fetchOptions);
         
         if (!response.ok) {
             throw new Error(`Failed to download recording: ${response.status} ${response.statusText}`);
@@ -605,8 +624,20 @@ async function processWithAssemblyAI(recordingUrl) {
     if (!assemblyai) return null;
     
     try {
+        console.log('🟡 AssemblyAI: Starting transcription...');
+        
+        // For Twilio recordings, AssemblyAI needs a publicly accessible URL
+        // We might need to download and re-upload or use a different approach
+        let audioUrl = recordingUrl;
+        
+        if (recordingUrl.includes('api.twilio.com')) {
+            console.log('🟡 AssemblyAI: Detected Twilio recording URL - may need authentication');
+            // AssemblyAI doesn't support Basic Auth URLs directly
+            // We'll try the URL as-is first, but might need to implement a proxy
+        }
+        
         const transcript = await assemblyai.transcripts.transcribe({
-            audio_url: recordingUrl,
+            audio_url: audioUrl,
             language_code: 'en_uk',
             punctuate: true,
             format_text: true,
@@ -616,6 +647,8 @@ async function processWithAssemblyAI(recordingUrl) {
             auto_highlights: true
         });
         
+        console.log('🟡 AssemblyAI: Transcription completed');
+        
         return { 
             text: transcript.text, 
             confidence: transcript.confidence,
@@ -623,7 +656,7 @@ async function processWithAssemblyAI(recordingUrl) {
             speaker_labels: transcript.utterances
         };
     } catch (error) {
-        console.error('❌ AssemblyAI processing error:', error);
+        console.error('🟡 AssemblyAI processing error:', error);
         return null;
     }
 }
@@ -756,8 +789,20 @@ app.post('/call-status', (req, res) => {
     const { CallSid, CallStatus, Direction, From, To } = req.body;
     console.log(`📞 Call status: ${CallSid} → ${CallStatus} (${Direction}) - ${From} → ${To}`);
     
-    // Clean up conference on call end
+    // Clean up conference on call end and check for recordings
     if (['completed', 'busy', 'failed', 'no-answer', 'canceled'].includes(CallStatus)) {
+        // Check if this was a hybrid enhanced call that should have a recording
+        const callInfo = activeConferences.get(CallSid);
+        
+        if (callInfo && callInfo.needsRecording && CallStatus === 'completed') {
+            console.log(`🎬 Call completed - checking for recording: ${CallSid}`);
+            
+            // Wait a bit then try to fetch recording from Twilio API
+            setTimeout(() => {
+                checkAndProcessRecording(CallSid, callInfo);
+            }, 5000); // Wait 5 seconds for recording to be available
+        }
+        
         // Clean up by CallSid AND check for related conference IDs
         activeConferences.delete(CallSid);
         
@@ -930,6 +975,63 @@ app.get('/test-recording', (req, res) => {
         testCallSid: testCallSid,
         testRecordingSid: testRecordingSid
     });
+});
+
+// Force check recordings for recent calls
+app.post('/force-check-recordings', async (req, res) => {
+    if (!twilioClient) {
+        return res.status(400).json({
+            success: false,
+            message: 'Twilio client not available'
+        });
+    }
+    
+    try {
+        console.log('🔍 Force checking recent recordings...');
+        
+        // Get recent recordings from last 1 hour
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        const recordings = await twilioClient.recordings.list({
+            dateCreatedAfter: oneHourAgo,
+            limit: 20
+        });
+        
+        console.log(`📼 Found ${recordings.length} recent recordings`);
+        
+        let processedCount = 0;
+        
+        for (const recording of recordings) {
+            const recordingUrl = `https://api.twilio.com${recording.uri.replace('.json', '.mp3')}`;
+            
+            console.log(`🎬 Processing recording: ${recording.sid} from call: ${recording.callSid}`);
+            
+            // Broadcast that we're processing this recording
+            broadcastTranscript({
+                type: 'transcription_processing',
+                callSid: recording.callSid,
+                recordingSid: recording.sid,
+                message: 'Force processing recording...',
+                timestamp: new Date().toISOString()
+            });
+            
+            // Process the recording
+            processRecordingMultiService(recordingUrl, recording.callSid, recording.sid);
+            processedCount++;
+        }
+        
+        res.json({
+            success: true,
+            message: `Initiated processing for ${processedCount} recordings`,
+            recordingsFound: recordings.length
+        });
+        
+    } catch (error) {
+        console.error('❌ Force check recordings error:', error);
+        res.status(500).json({
+            success: false,
+            message: `Error checking recordings: ${error.message}`
+        });
+    }
 });
 
 // Catch-all webhook logger
@@ -1888,6 +1990,72 @@ function startCallCleanupTimer() {
     console.log('🕒 Started call cleanup timer (checks every 60s, removes calls older than 10min)');
 }
 
+// Check for recordings using Twilio API when webhook fails
+async function checkAndProcessRecording(callSid, callInfo) {
+    if (!twilioClient) {
+        console.log('⚠️ No Twilio client available for recording check');
+        return;
+    }
+    
+    try {
+        console.log(`🔍 Checking for recordings for call: ${callSid}`);
+        
+        // Fetch recordings for this call
+        const recordings = await twilioClient.recordings.list({
+            callSid: callSid,
+            limit: 10
+        });
+        
+        console.log(`📼 Found ${recordings.length} recordings for call ${callSid}`);
+        
+        if (recordings.length > 0) {
+            // Process the most recent recording
+            const recording = recordings[0];
+            const recordingUrl = `https://api.twilio.com${recording.uri.replace('.json', '.mp3')}`;
+            
+            console.log(`🎬 Processing recording: ${recording.sid}`);
+            console.log(`📼 Recording URL: ${recordingUrl}`);
+            console.log(`⏱️ Duration: ${recording.duration} seconds`);
+            
+            // Broadcast that we found the recording
+            broadcastTranscript({
+                type: 'call_ended',
+                callSid: callSid,
+                recordingSid: recording.sid,
+                duration: recording.duration,
+                message: 'Recording found - Processing transcription...',
+                timestamp: new Date().toISOString()
+            });
+            
+            // Process the recording
+            console.log(`🎯 Starting multi-service transcription for ${recording.sid}`);
+            processRecordingMultiService(recordingUrl, callSid, recording.sid);
+            
+        } else {
+            console.log(`⚠️ No recordings found for call ${callSid}`);
+            
+            // Broadcast that no recording was found
+            broadcastTranscript({
+                type: 'transcription_error',
+                callSid: callSid,
+                message: 'No recording found for this call',
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+    } catch (error) {
+        console.error(`❌ Error checking for recordings: ${error.message}`);
+        
+        // Broadcast error
+        broadcastTranscript({
+            type: 'transcription_error',
+            callSid: callSid,
+            message: `Failed to check for recordings: ${error.message}`,
+            timestamp: new Date().toISOString()
+        });
+    }
+}
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('🛑 Shutting down gracefully...');
@@ -2124,7 +2292,8 @@ app.post('/webhook-hybrid-enhanced', (req, res) => {
         caller: From,
         startTime: new Date(),
         mode: 'hybrid_enhanced',
-        multiService: assemblyai ? true : false
+        multiService: assemblyai ? true : false,
+        needsRecording: true // Flag to check for recording later
     });
     
     // Broadcast call start to dashboard
@@ -2137,22 +2306,26 @@ app.post('/webhook-hybrid-enhanced', (req, res) => {
         timestamp: new Date().toISOString()
     });
     
-    // Force HTTPS for recording callback
+    // Force HTTPS for recording callback AND call status callback
     const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
     const host = req.get('host');
     const recordingCallback = `${protocol}://${host}/recording-complete`;
+    const callStatusCallback = `${protocol}://${host}/call-status`;
     
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial record="record-from-start" 
           recordingStatusCallback="${recordingCallback}"
           recordingStatusCallbackEvent="completed"
+          statusCallback="${callStatusCallback}"
+          statusCallbackEvent="answered,completed"
           timeout="30">
         <Number>+447494225623</Number>
     </Dial>
 </Response>`;
     
     console.log(`🔥 HYBRID ENHANCED: Recording callback URL: ${recordingCallback}`);
+    console.log(`🔥 HYBRID ENHANCED: Call status callback URL: ${callStatusCallback}`);
     console.log(`🔥 HYBRID ENHANCED: Direct bridge + Multi-service recording for ${CallSid}`);
     res.type('text/xml').send(twiml);
 });
