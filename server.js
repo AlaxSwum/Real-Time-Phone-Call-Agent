@@ -81,7 +81,10 @@ app.post('/webhook', (req, res) => {
             statusCallbackEvent="start,end,join,leave"
             record="true"
             startConferenceOnEnter="true"
-            endConferenceOnExit="false">
+            endConferenceOnExit="false"
+            waitUrl=""
+            waitMethod="GET"
+            maxParticipants="10">
             ${conferenceId}
         </Conference>
     </Dial>
@@ -129,8 +132,10 @@ app.post('/participant', (req, res) => {
         <Conference 
             statusCallback="${protocol}://${req.get('host')}/conference-events"
             statusCallbackEvent="start,end,join,leave"
-            startConferenceOnEnter="false"
-            endConferenceOnExit="false">
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            waitUrl=""
+            waitMethod="GET">
             ${conferenceId}
         </Conference>
     </Dial>
@@ -229,6 +234,7 @@ function handleDeepgramStream(ws, req) {
     const conferenceId = url.searchParams.get('conference') || 'unknown';
     
     console.log(`🎙️ Deepgram stream started for conference: ${conferenceId}`);
+    console.log(`🔍 Stream URL: ${req.url}`);
     
     // Create Deepgram live connection
     const deepgramLive = deepgram.listen.live({
@@ -422,8 +428,9 @@ async function sendToWebhook(data) {
 
 // Handle conference events
 app.post('/conference-events', (req, res) => {
-    const { ConferenceSid, StatusCallbackEvent, CallSid } = req.body;
+    const { ConferenceSid, StatusCallbackEvent, CallSid, Muted, Hold } = req.body;
     console.log(`🎪 Conference event: ${StatusCallbackEvent} for ${ConferenceSid}`);
+    console.log(`🔍 Event details:`, { CallSid, Muted, Hold, timestamp: new Date().toISOString() });
     
     switch (StatusCallbackEvent) {
         case 'conference-start':
@@ -434,7 +441,7 @@ app.post('/conference-events', (req, res) => {
             activeConferences.delete(ConferenceSid);
             break;
         case 'participant-join':
-            console.log(`👋 Participant joined: ${CallSid}`);
+            console.log(`👋 Participant joined: ${CallSid} (Muted: ${Muted}, Hold: ${Hold})`);
             break;
         case 'participant-leave':
             console.log(`👋 Participant left: ${CallSid}`);
