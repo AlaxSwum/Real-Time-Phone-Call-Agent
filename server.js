@@ -8,6 +8,7 @@ const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
 const { createClient } = require('@deepgram/sdk');
+const twilio = require('twilio');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,6 +18,19 @@ const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || 'c34944ade6ce11abf23553
 console.log('🔧 Initializing Deepgram client...');
 const deepgram = createClient(DEEPGRAM_API_KEY);
 console.log('✅ Deepgram client initialized');
+
+// Twilio configuration (optional for auto-dial)
+let twilioClient = null;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+
+if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
+    console.log('🔧 Initializing Twilio client for auto-dial...');
+    twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+    console.log('✅ Twilio client initialized');
+} else {
+    console.log('⚠️ Twilio credentials not configured - auto-dial disabled');
+}
 
 // Basic setup
 const PORT = process.env.PORT || 3000;
@@ -110,15 +124,42 @@ app.post('/participant', (req, res) => {
 
 // Auto-dial function
 async function dialParticipant(conferenceId, participantNumber, req) {
+    if (!twilioClient) {
+        console.log('⚠️ Auto-dial skipped: Twilio client not configured');
+        return;
+    }
+    
     try {
         const protocol = req.secure ? 'https' : 'http';
         const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/participant?conference=${conferenceId}`;
         
         console.log(`📱 Auto-dialing participant: ${participantNumber} → ${conferenceId}`);
-        console.log(`🔗 Participant would be dialed with URL: ${protocol}://${host}/participant?conference=${conferenceId}`);
+        
+        // Make actual Twilio call
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789', // Your Twilio number
+            url: participantUrl,
+            method: 'POST',
+            statusCallback: `${protocol}://${host}/call-status`,
+            statusCallbackMethod: 'POST'
+        });
+        
+        console.log(`✅ Auto-dial initiated: ${call.sid} → ${participantNumber}`);
+        console.log(`🔗 Participant will join conference: ${conferenceId}`);
+        
+        // Update conference info
+        if (activeConferences.has(conferenceId)) {
+            const conf = activeConferences.get(conferenceId);
+            conf.outboundCallSid = call.sid;
+            conf.participantNumber = participantNumber;
+            activeConferences.set(conferenceId, conf);
+        }
         
     } catch (error) {
-        console.error('❌ Auto-dial error:', error);
+        console.error('❌ Auto-dial error:', error.message);
+        console.error('🔍 Check: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER');
     }
 }
 
@@ -355,6 +396,31 @@ app.post('/conference-events', (req, res) => {
     res.sendStatus(200);
 });
 
+// Handle call status updates
+app.post('/call-status', (req, res) => {
+    const { CallSid, CallStatus, Direction } = req.body;
+    console.log(`📞 Call status: ${CallSid} → ${CallStatus} (${Direction})`);
+    
+    switch (CallStatus) {
+        case 'ringing':
+            console.log(`📞 Auto-dial ringing: ${CallSid}`);
+            break;
+        case 'answered':
+            console.log(`✅ Auto-dial answered: ${CallSid}`);
+            break;
+        case 'completed':
+            console.log(`📞 Auto-dial completed: ${CallSid}`);
+            break;
+        case 'failed':
+        case 'busy':
+        case 'no-answer':
+            console.log(`❌ Auto-dial failed: ${CallSid} (${CallStatus})`);
+            break;
+    }
+    
+    res.sendStatus(200);
+});
+
 // ============================================================================
 // ESSENTIAL ENDPOINTS
 // ============================================================================
@@ -377,7 +443,13 @@ app.get('/status', (req, res) => {
         version: '3.0-deepgram',
         architecture: 'Conference + Deepgram Streaming',
         activeConferences: Array.from(activeConferences.entries()),
-        features: ['twilio-conference', 'deepgram-streaming', 'real-time-transcription'],
+        features: ['twilio-conference', 'deepgram-streaming', 'real-time-transcription', 'auto-dial'],
+        configuration: {
+            deepgram: !!DEEPGRAM_API_KEY,
+            twilio: !!twilioClient,
+            participant_number: !!PARTICIPANT_NUMBER,
+            auto_dial_enabled: !!(twilioClient && PARTICIPANT_NUMBER)
+        },
         timestamp: new Date().toISOString()
     });
 });
@@ -458,7 +530,9 @@ server.listen(PORT, () => {
     console.log(`🎯 Architecture: Deepgram + Conference (Railway optimized)`);
     console.log(`📊 Code size: ~300 lines (reduced from 4000+)`);
     console.log(`🔑 Deepgram API: ${DEEPGRAM_API_KEY ? 'Configured' : 'Missing'}`);
+    console.log(`📞 Twilio Client: ${twilioClient ? 'Configured' : 'Not configured'}`);
     console.log(`📱 Auto-dial participant: ${PARTICIPANT_NUMBER || 'Not configured'}`);
+    console.log(`🎯 Auto-dial status: ${(twilioClient && PARTICIPANT_NUMBER) ? 'ENABLED' : 'DISABLED'}`);
     console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`✅ Ready for Twilio webhook integration`);
 });
