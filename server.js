@@ -79,11 +79,11 @@ app.post('/webhook', (req, res) => {
         <Conference 
             statusCallback="${protocol}://${host}/conference-events"
             statusCallbackEvent="start,end,join,leave"
-            record="true"
+            record="false"
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             waitUrl=""
-            waitMethod="GET"
+            beep="false"
             maxParticipants="10">
             ${conferenceId}
         </Conference>
@@ -135,7 +135,8 @@ app.post('/participant', (req, res) => {
             startConferenceOnEnter="true"
             endConferenceOnExit="false"
             waitUrl=""
-            waitMethod="GET">
+            beep="false"
+            muted="false">
             ${conferenceId}
         </Conference>
     </Dial>
@@ -228,13 +229,23 @@ wss.on('connection', (ws, req) => {
     }
 });
 
-// Deepgram stream handler
+// Deepgram stream handler  
 function handleDeepgramStream(ws, req) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const conferenceId = url.searchParams.get('conference') || 'unknown';
     
     console.log(`🎙️ Deepgram stream started for conference: ${conferenceId}`);
     console.log(`🔍 Stream URL: ${req.url}`);
+    console.log(`🔍 Conference ID extracted: ${conferenceId}`);
+    
+    if (conferenceId === 'unknown') {
+        console.log(`⚠️ WARNING: Conference ID not found in stream URL`);
+        console.log(`🔍 Full URL breakdown:`, {
+            pathname: url.pathname,
+            search: url.search,
+            searchParams: Object.fromEntries(url.searchParams.entries())
+        });
+    }
     
     // Create Deepgram live connection
     const deepgramLive = deepgram.listen.live({
@@ -589,13 +600,39 @@ app.get('/test/participant', (req, res) => {
     <Dial>
         <Conference 
             statusCallback="${protocol}://${req.get('host')}/conference-events"
-            statusCallbackEvent="start,end,join,leave">
+            statusCallbackEvent="start,end,join,leave"
+            startConferenceOnEnter="true"
+            beep="false"
+            muted="false">
             ${conferenceId}
         </Conference>
     </Dial>
 </Response>`;
     
     console.log(`🧪 Test participant endpoint called with conference: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+});
+
+// Test conference audio endpoint
+app.post('/test/conference-audio', (req, res) => {
+    const conferenceId = req.body.conferenceId || 'test-audio-conf';
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Testing audio. You should be able to hear and speak in this conference.</Say>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            waitUrl="">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`🎵 Audio test for conference: ${conferenceId}`);
     res.type('text/xml').send(twiml);
 });
 
