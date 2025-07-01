@@ -792,7 +792,17 @@ app.post('/call-status', (req, res) => {
     // Clean up conference on call end and check for recordings
     if (['completed', 'busy', 'failed', 'no-answer', 'canceled'].includes(CallStatus)) {
         // Check if this was a hybrid enhanced call that should have a recording
-        const callInfo = activeConferences.get(CallSid);
+        let callInfo = activeConferences.get(CallSid);
+        
+        // If not found by CallSid, check by conference ID (new approach)
+        if (!callInfo) {
+            for (const [key, conf] of activeConferences.entries()) {
+                if (conf.callSid === CallSid) {
+                    callInfo = conf;
+                    break;
+                }
+            }
+        }
         
         if (callInfo && callInfo.needsRecording && CallStatus === 'completed') {
             console.log(`🎬 Call completed - checking for recording: ${CallSid}`);
@@ -832,7 +842,7 @@ app.post('/call-status', (req, res) => {
         console.log('🔊 Broadcasting call end to dashboard:', endMessage);
         broadcastTranscript(endMessage);
         
-                            } else {
+    } else {
         // Broadcast call status to WebSocket clients
         const statusMessage = {
             type: 'call_status',
@@ -1872,60 +1882,66 @@ app.post('/participant-record', (req, res) => {
 
 // Handle recording completion
 app.post('/recording-complete', (req, res) => {
-    console.log('📞 RECORDING WEBHOOK CALLED!');
+    console.log('🎉 RECORDING WEBHOOK CALLED! (New Conference Approach)');
     console.log('📞 Headers:', req.headers);
     console.log('📞 Body:', JSON.stringify(req.body, null, 2));
     
-    const { CallSid, RecordingUrl, RecordingSid, RecordingDuration, RecordingStatus } = req.body;
+    const { CallSid, RecordingUrl, RecordingSid, RecordingDuration, RecordingStatus, ConferenceSid } = req.body;
     
-    if (!CallSid || !RecordingUrl) {
-        console.error('❌ Missing required recording data:', { CallSid, RecordingUrl, RecordingSid });
+    console.log(`🎬 Recording details:`);
+    console.log(`  - CallSid: ${CallSid}`);
+    console.log(`  - ConferenceSid: ${ConferenceSid}`);
+    console.log(`  - RecordingSid: ${RecordingSid}`);
+    console.log(`  - Status: ${RecordingStatus}`);
+    console.log(`  - Duration: ${RecordingDuration} seconds`);
+    console.log(`  - URL: ${RecordingUrl}`);
+    
+    if (!RecordingUrl) {
+        console.error('❌ Missing recording URL');
         return res.sendStatus(400);
     }
     
-    console.log(`🎬 Recording completed for ${CallSid}`);
-    console.log(`📼 Recording URL: ${RecordingUrl}`);
-    console.log(`📼 Recording SID: ${RecordingSid}`);
-    console.log(`⏱️ Duration: ${RecordingDuration} seconds`);
-    console.log(`📊 Status: ${RecordingStatus}`);
-    
-    // Clean up active conferences for this call
-    activeConferences.delete(CallSid);
+    // Clean up active conferences - look for both CallSid and ConferenceSid
+    const originalSize = activeConferences.size;
     const keysToDelete = [];
+    
     for (const [key, conf] of activeConferences.entries()) {
-        if (conf.callSid === CallSid || key.includes(CallSid)) {
+        if ((CallSid && (conf.callSid === CallSid || key.includes(CallSid))) ||
+            (ConferenceSid && key.includes(ConferenceSid))) {
             keysToDelete.push(key);
         }
     }
+    
     keysToDelete.forEach(key => activeConferences.delete(key));
-    console.log(`🧹 Recording complete - cleaned up ${keysToDelete.length + 1} conference entries`);
+    console.log(`🧹 Cleaned up ${keysToDelete.length} conference entries (was ${originalSize}, now ${activeConferences.size})`);
     
     // Broadcast recording completion to dashboard
     const completionMessage = {
         type: 'call_ended',
-        callSid: CallSid,
+        callSid: CallSid || ConferenceSid,
         recordingSid: RecordingSid,
         duration: RecordingDuration,
-        message: 'Call ended - Processing transcription...',
+        message: '✅ Recording found! Processing transcription...',
         timestamp: new Date().toISOString()
     };
     
     console.log('🔊 Broadcasting recording completion:', completionMessage);
     broadcastTranscript(completionMessage);
     
-    // Only process if recording is completed successfully
-    if (RecordingStatus === 'completed' && RecordingUrl) {
+    // Process the recording regardless of status (be more permissive)
+    if (RecordingUrl) {
         console.log(`🎯 Starting multi-service transcription for ${RecordingSid}`);
-        processRecordingMultiService(RecordingUrl, CallSid, RecordingSid);
+        console.log(`🎯 This proves the recording webhook is working!`);
+        processRecordingMultiService(RecordingUrl, CallSid || ConferenceSid, RecordingSid);
     } else {
-        console.log(`⚠️ Recording not ready for processing: ${RecordingStatus}`);
+        console.log(`⚠️ No recording URL provided`);
         
         // Broadcast error
         broadcastTranscript({
             type: 'transcription_error',
-            callSid: CallSid,
+            callSid: CallSid || ConferenceSid,
             recordingSid: RecordingSid,
-            message: `Recording ${RecordingStatus} - cannot process transcription`,
+            message: `No recording URL provided`,
             timestamp: new Date().toISOString()
         });
     }
@@ -1989,6 +2005,61 @@ function startCallCleanupTimer() {
     
     console.log('🕒 Started call cleanup timer (checks every 60s, removes calls older than 10min)');
 }
+
+// Auto-dial participant to recording conference
+async function dialParticipantToRecordingConference(conferenceId, participantNumber, req) {
+    if (!twilioClient) {
+        console.log('⚠️ No Twilio client available for auto-dial');
+        return;
+    }
+    
+    try {
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+        const host = req.get('host');
+        const participantUrl = `${protocol}://${host}/join-recording-conference?conference=${conferenceId}`;
+        
+        console.log(`📞 Auto-dialing ${participantNumber} to recording conference ${conferenceId}`);
+        console.log(`📞 Participant URL: ${participantUrl}`);
+        
+        const call = await twilioClient.calls.create({
+            to: participantNumber,
+            from: process.env.TWILIO_PHONE_NUMBER || '+441733964789',
+            url: participantUrl,
+            method: 'POST'
+        });
+        
+        console.log(`✅ Auto-dial initiated: ${call.sid} → ${participantNumber}`);
+        
+    } catch (error) {
+        console.error('❌ Auto-dial error:', error);
+    }
+}
+
+// Participant endpoint for recording conference
+app.post('/join-recording-conference', (req, res) => {
+    const { CallSid, From, To } = req.body;
+    const conferenceId = req.query.conference;
+    
+    console.log(`👥 Participant joining recording conference: ${conferenceId}`);
+    console.log(`📞 From: ${From}, To: ${To}, CallSid: ${CallSid}`);
+    
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial>
+        <Conference 
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            region="ireland">
+            ${conferenceId}
+        </Conference>
+    </Dial>
+</Response>`;
+    
+    console.log(`👥 Participant TwiML sent for conference: ${conferenceId}`);
+    res.type('text/xml').send(twiml);
+});
 
 // Check for recordings using Twilio API when webhook fails
 async function checkAndProcessRecording(callSid, callInfo) {
@@ -2281,19 +2352,24 @@ app.post('/participant-enhanced', (req, res) => {
     res.type('text/xml').send(twiml);
 });
 
-// Hybrid enhanced: Bridge + Multi-service recording
+// Hybrid enhanced: Conference + Multi-service recording (NEW APPROACH)
 app.post('/webhook-hybrid-enhanced', (req, res) => {
     const { CallSid, From, To } = req.body;
-    console.log(`🔥 HYBRID ENHANCED: ${From} → ${To} (${CallSid})`);
+    console.log(`🔥 HYBRID ENHANCED CONFERENCE: ${From} → ${To} (${CallSid})`);
+    
+    const conferenceId = `rec-${CallSid}`;
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const host = req.get('host');
     
     // Store call info for enhanced processing
-    activeConferences.set(CallSid, {
+    activeConferences.set(conferenceId, {
         callSid: CallSid,
         caller: From,
         startTime: new Date(),
-        mode: 'hybrid_enhanced',
+        mode: 'hybrid_enhanced_conference',
         multiService: assemblyai ? true : false,
-        needsRecording: true // Flag to check for recording later
+        needsRecording: true,
+        conferenceId: conferenceId
     });
     
     // Broadcast call start to dashboard
@@ -2301,31 +2377,40 @@ app.post('/webhook-hybrid-enhanced', (req, res) => {
         type: 'call_started',
         callSid: CallSid,
         caller: From,
-        mode: 'hybrid_enhanced',
-        message: 'Call connected - Recording for enhanced transcription',
+        mode: 'hybrid_enhanced_conference',
+        message: 'Conference call with recording started',
         timestamp: new Date().toISOString()
     });
     
-    // Force HTTPS for recording callback AND call status callback
-    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
-    const host = req.get('host');
-    const recordingCallback = `${protocol}://${host}/recording-complete`;
-    const callStatusCallback = `${protocol}://${host}/call-status`;
-    
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial record="record-from-start" 
-          recordingStatusCallback="${recordingCallback}"
-          recordingStatusCallbackEvent="completed"
-          statusCallback="${callStatusCallback}"
-          statusCallbackEvent="answered,completed"
-          timeout="30">
-        <Number>+447494225623</Number>
+    <Dial>
+        <Conference 
+            statusCallback="${protocol}://${host}/conference-events"
+            statusCallbackEvent="start,end,join,leave"
+            record="record-from-start"
+            recordingStatusCallback="${protocol}://${host}/recording-complete"
+            recordingStatusCallbackEvent="completed"
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            beep="false"
+            muted="false"
+            region="ireland"
+            maxParticipants="10">
+            ${conferenceId}
+        </Conference>
     </Dial>
 </Response>`;
     
-    console.log(`🔥 HYBRID ENHANCED: Recording callback URL: ${recordingCallback}`);
-    console.log(`🔥 HYBRID ENHANCED: Call status callback URL: ${callStatusCallback}`);
-    console.log(`🔥 HYBRID ENHANCED: Direct bridge + Multi-service recording for ${CallSid}`);
+    console.log(`🔥 CONFERENCE RECORDING: ${conferenceId}`);
+    console.log(`🔥 Recording callback: ${protocol}://${host}/recording-complete`);
+    console.log(`🔥 TwiML sent for conference recording approach`);
     res.type('text/xml').send(twiml);
+    
+    // Auto-dial participant to same conference after short delay
+    if (process.env.PARTICIPANT_NUMBER) {
+        setTimeout(() => {
+            dialParticipantToRecordingConference(conferenceId, process.env.PARTICIPANT_NUMBER, req);
+        }, 2000);
+    }
 });
